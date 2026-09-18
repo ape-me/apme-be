@@ -19,6 +19,13 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+app.get("/", (c) => c.json({
+  name: "apme-be",
+  health: "/health",
+  reads: ["/v1/stocks", "/v1/stocks/:mint/tokens?sort=volume|new|mcap&limit&cursor", "/v1/tokens/:mint", "/v1/tokens/:mint/candles?tf=1m|5m|15m|1h|4h|1d&limit&before", "/v1/tokens/:mint/trades?limit&before"],
+  live: ["wss: /ws/floor", "wss: /ws/:mint"],
+}));
+
 app.get("/health", withDb, async (c) => {
   const now = Math.floor(Date.now() / 1000);
   try {
