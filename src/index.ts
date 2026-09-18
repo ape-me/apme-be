@@ -7,12 +7,13 @@ import { marketRepo } from "./repos/market";
 import { read } from "./routes/read";
 import { ingest } from "./routes/ingest";
 import { ws } from "./routes/ws";
+import { apelistRoute } from "./routes/apelist";
 
 export { Room } from "./do/room";
 
 const app = new Hono<{ Bindings: Env; Variables: DbVars }>();
 
-app.use("*", cors({ origin: "*", allowMethods: ["GET", "POST"], maxAge: 86400 }));
+app.use("*", async (c, next) => c.req.path.startsWith("/api/apelist") ? next() : cors({ origin: "*", allowMethods: ["GET", "POST"], maxAge: 86400 })(c, next));
 app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "no-referrer");
@@ -24,6 +25,7 @@ app.get("/", (c) => c.json({
   health: "/health",
   reads: ["/v1/ticker?stonks=10&memes=10", "/v1/stocks", "/v1/stocks/:mint/tokens?sort=volume|new|mcap&limit&cursor", "/v1/tokens/:mint", "/v1/tokens/:mint/candles?tf=1m|5m|15m|1h|4h|1d&limit&before", "/v1/tokens/:mint/trades?limit&before"],
   live: ["wss: /ws/floor", "wss: /ws/:mint"],
+  apelist: ["POST /api/apelist", "GET /api/apelist/count", "GET /api/apelist/confirm?t="],
 }));
 
 app.get("/health", withDb, async (c) => {
@@ -39,6 +41,7 @@ app.get("/health", withDb, async (c) => {
   }
 });
 
+app.route("/api/apelist", apelistRoute);
 app.route("/v1", read);
 app.route("/api", read);   // alias, same handlers
 app.route("/ingest", ingest);

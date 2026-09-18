@@ -9,6 +9,9 @@ enabled = true
 
 [vars]
 ENV = "dev"
+ALLOWED_ORIGINS = "https://apeme.fun,https://www.apeme.fun,http://localhost:5173"
+SITE_URL = "https://apeme.fun"
+PUBLIC_URL = "https://apme-be.iamjoey.workers.dev"
 
 # Hyperdrive to the VPS Postgres (read-only user). Created with:
 #   wrangler hyperdrive create apme-pg --connection-string="postgres://apeme_ro:...@<tunnel-host>:5432/apeme"
@@ -32,3 +35,16 @@ name = "RL_READ"
 type = "ratelimit"
 namespace_id = "1001"
 simple = { limit = 600, period = 60 }
+
+# Apelist (email waitlist). D1 for signups, Turnstile + Resend via secrets: TURNSTILE_SECRET, RESEND_API_KEY, IP_SALT.
+[[d1_databases]]
+binding = "DB"
+database_name = "apeme"
+database_id = "dade1719-e69a-48a2-9c63-a8c8da221dfe"
+migrations_dir = "migrations/d1"
+
+[[unsafe.bindings]]
+name = "RL_APELIST"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 5, period = 60 }
