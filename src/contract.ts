@@ -57,4 +57,10 @@ export const WsStats = z.object({ t: z.literal("stats"), asOf: z.number().int(),
 export const WsMessage = z.discriminatedUnion("t", [WsTrade, WsNewToken, WsStats]);
 export type WsMessage = z.infer<typeof WsMessage>;
 
+export const TickerToken = z.object({
+  id: Mint, kind: z.enum(["meme", "stonk"]), label: z.string(), logo: z.string().nullable(),
+  change24h: z.number().nullable(), price: z.number().nullable(),
+});
+export const TickerResponse = z.object({ updatedAt: z.string(), tokens: z.array(TickerToken) });
+
 export const ErrorBody = z.object({ error: z.string(), requestId: z.string() });

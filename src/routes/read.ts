@@ -18,6 +18,11 @@ const parse = <T>(schema: z.ZodType<T>, v: unknown): T => {
 export const read = new Hono<{ Bindings: Env; Variables: DbVars }>();
 read.use("*", rateLimited, withDb);
 
+read.get("/ticker", (c) => cached(c.req.raw, 3, async () => {
+  const q = parse(z.object({ stonks: Limit.default(10), memes: Limit.default(10) }), c.req.query());
+  return c.json(await catalog.ticker(c.get("sql"), q.stonks, q.memes));
+}));
+
 read.get("/stocks", (c) => cached(c.req.raw, 5, async () => c.json(await catalog.stocks(c.get("sql")))));
 
 read.get("/stocks/:mint/tokens", (c) => cached(c.req.raw, 3, async () => {

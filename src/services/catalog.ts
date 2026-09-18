@@ -1,9 +1,10 @@
 import type { Sql } from "../lib/db";
 import { stocksRepo } from "../repos/stocks";
 import { tokensRepo, type Sort } from "../repos/tokens";
+import { tickerRepo } from "../repos/ticker";
 import { notFound } from "../lib/errors";
 import { shapeStock, shapeToken, shapeHeader, marketOpen } from "./shape";
-import type { StocksResponse, StockTokensResponse, TokenHeader } from "../contract";
+import type { StocksResponse, StockTokensResponse, TokenHeader, TickerResponse } from "../contract";
 import type { z } from "zod";
 
 const encodeCursor = (v: number, mint: string) => btoa(`${v}:${mint}`);
@@ -13,6 +14,15 @@ const decodeCursor = (c?: string) => {
 };
 
 export const catalog = {
+  ticker: async (sql: Sql, stonks: number, memes: number): Promise<z.infer<typeof TickerResponse>> => {
+    const rows = await tickerRepo.rows(sql, stonks, memes);
+    const memesFirst = [...rows.filter((r) => r.kind === "meme"), ...rows.filter((r) => r.kind === "stonk")];
+    return {
+      updatedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      tokens: memesFirst.map((r) => ({ id: r.id, kind: r.kind, label: r.label, logo: r.logo, change24h: r.change24h == null ? null : Number(r.change24h), price: r.price == null ? null : Number(r.price) })),
+    };
+  },
+
   stocks: async (sql: Sql): Promise<z.infer<typeof StocksResponse>> => {
     const open = marketOpen();
     const rows = await stocksRepo.all(sql);

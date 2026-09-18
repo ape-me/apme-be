@@ -22,7 +22,7 @@ app.use("*", async (c, next) => {
 app.get("/", (c) => c.json({
   name: "apme-be",
   health: "/health",
-  reads: ["/v1/stocks", "/v1/stocks/:mint/tokens?sort=volume|new|mcap&limit&cursor", "/v1/tokens/:mint", "/v1/tokens/:mint/candles?tf=1m|5m|15m|1h|4h|1d&limit&before", "/v1/tokens/:mint/trades?limit&before"],
+  reads: ["/v1/ticker?stonks=10&memes=10", "/v1/stocks", "/v1/stocks/:mint/tokens?sort=volume|new|mcap&limit&cursor", "/v1/tokens/:mint", "/v1/tokens/:mint/candles?tf=1m|5m|15m|1h|4h|1d&limit&before", "/v1/tokens/:mint/trades?limit&before"],
   live: ["wss: /ws/floor", "wss: /ws/:mint"],
 }));
 
@@ -40,6 +40,7 @@ app.get("/health", withDb, async (c) => {
 });
 
 app.route("/v1", read);
+app.route("/api", read);   // alias, same handlers
 app.route("/ingest", ingest);
 app.route("/ws", ws);
 
