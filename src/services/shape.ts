@@ -1,0 +1,45 @@
+// Row → contract. The only place DB column names meet API field names.
+import type { Stock, TokenCard, TokenHeader, Trade, Candle } from "../contract";
+import type { StockRow } from "../repos/stocks";
+import type { TokenRow } from "../repos/tokens";
+import type { TradeRow, CandleRow } from "../repos/market";
+
+const num = (v: unknown): number | null => (v == null ? null : Number(v));
+const int = (v: unknown): number => (v == null ? 0 : Number(v));
+
+// NYSE regular session, Mon–Fri 09:30–16:00 America/New_York. Holidays ignored for now.
+export function marketOpen(now = new Date()): boolean {
+  const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "numeric", hour12: false })
+    .formatToParts(now).reduce<Record<string, string>>((a, x) => ((a[x.type] = x.value), a), {});
+  if (p.weekday === "Sat" || p.weekday === "Sun") return false;
+  const m = Number(p.hour) * 60 + Number(p.minute);
+  return m >= 570 && m < 960;
+}
+
+export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
+  mint: r.mint, symbol: r.symbol, name: r.name, issuer: r.issuer, category: r.category, logo: r.logo,
+  priceUsd: num(r.price_usd), change24h: num(r.change_24h), memes: int(r.memes), marketOpen: open,
+});
+
+export const shapeToken = (r: TokenRow): TokenCard => ({
+  mint: r.mint, symbol: r.symbol, name: r.name, image: r.image, quoteMint: r.quote_mint, launchpad: r.launchpad,
+  phase: r.phase, createdAt: int(r.created_at), priceQuote: num(r.price_quote), priceUsd: num(r.price_usd),
+  mcapUsd: num(r.mcap_usd), vol24hUsd: int(r.vol_24h_usd), buys24h: int(r.buys_24h), sells24h: int(r.sells_24h),
+  change24h: num(r.change_24h), taxBps: int(r.tax_bps), progressPct: num(r.progress_pct), lastTradeAt: num(r.last_trade_at),
+});
+
+export const shapeHeader = (r: TokenRow, s: StockRow): TokenHeader => ({
+  ...shapeToken(r), creator: r.creator, decimals: r.decimals, supply: r.supply, curvePool: r.curve_pool, ammPool: r.amm_pool, uri: r.uri,
+  stock: { mint: s.mint, symbol: s.symbol, name: s.name, priceUsd: num(s.price_usd), change24h: num(s.change_24h), marketOpen: marketOpen() },
+});
+
+export const shapeTrade = (r: TradeRow, baseDec: number, quoteDec: number, stockUsd: number | null): Trade => {
+  const priceQuote = Number(r.price_quote);
+  return {
+    sig: r.signature, ts: int(r.block_time), slot: int(r.slot), side: r.side, wallet: r.wallet,
+    base: Number(r.base_raw) / 10 ** baseDec, quote: Number(r.quote_raw) / 10 ** quoteDec, priceQuote,
+    priceUsd: stockUsd == null ? null : priceQuote * stockUsd,
+  };
+};
+
+export const shapeCandle = (r: CandleRow): Candle => ({ t: int(r.t), o: Number(r.o), h: Number(r.h), l: Number(r.l), c: Number(r.c), v: Number(r.v), n: int(r.n) });
