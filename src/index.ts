@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./env";
 import { HttpError } from "./lib/errors";
-import { db } from "./lib/db";
+import { withDb, type DbVars } from "./lib/db";
 import { marketRepo } from "./repos/market";
 import { read } from "./routes/read";
 import { ingest } from "./routes/ingest";
@@ -10,7 +10,7 @@ import { ws } from "./routes/ws";
 
 export { Room } from "./do/room";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: DbVars }>();
 
 app.use("*", cors({ origin: "*", allowMethods: ["GET", "POST"], maxAge: 86400 }));
 app.use("*", async (c, next) => {
@@ -19,14 +19,14 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-app.get("/health", async (c) => {
+app.get("/health", withDb, async (c) => {
   const now = Math.floor(Date.now() / 1000);
-  const hasDb = Boolean(c.env.PG || c.env.DATABASE_URL);
-  if (!hasDb) return c.json({ ok: true, env: c.env.ENV, db: "unbound", now });
   try {
-    const h = await marketRepo.health(db(c.env));
+    const t0 = Date.now();
+    const h = await marketRepo.health(c.get("sql"));
+    const dbMs = Date.now() - t0;
     const lag = h.newest_trade ? now - Number(h.newest_trade) : null;
-    return c.json({ ok: true, env: c.env.ENV, db: "ok", indexer: { slot: Number(h.last_slot), cursorAge: now - Number(h.updated_at), newestTradeAge: lag }, now });
+    return c.json({ ok: true, env: c.env.ENV, db: "ok", dbMs, colo: c.req.raw.cf?.colo, indexer: { slot: Number(h.last_slot), cursorAge: now - Number(h.updated_at), newestTradeAge: lag }, now });
   } catch (e) {
     return c.json({ ok: false, env: c.env.ENV, db: "error", error: (e as Error).message, now }, 503);
   }

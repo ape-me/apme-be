@@ -12,9 +12,9 @@ ENV = "dev"
 
 # Hyperdrive to the VPS Postgres (read-only user). Created with:
 #   wrangler hyperdrive create apme-pg --connection-string="postgres://apeme_ro:...@<tunnel-host>:5432/apeme"
-# [[hyperdrive]]
-# binding = "PG"
-# id = "<hyperdrive-id>"
+[[hyperdrive]]
+binding = "PG"
+id = "07c882fe8d694e95819137fbc6cff6c4"
 
 [[durable_objects.bindings]]
 name = "ROOMS"
@@ -25,3 +25,10 @@ tag = "v1"
 new_sqlite_classes = ["Room"]
 
 # secrets (wrangler secret put): INGEST_SECRET
+
+# Per-IP rate limits. Reads: 600/min. Ingest is HMAC-gated, no limit.
+[[unsafe.bindings]]
+name = "RL_READ"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 600, period = 60 }

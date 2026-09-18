@@ -2,7 +2,7 @@ import type { Sql } from "../lib/db";
 
 export type StockRow = {
   mint: string; symbol: string; name: string; issuer: string; category: string; decimals: number;
-  logo: string | null; price_usd: number | null; change_24h: number | null; memes: number;
+  logo: string | null; price_usd: number | null; change_24h: number | null; memes?: number;
 };
 
 export const stocksRepo = {

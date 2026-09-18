@@ -20,9 +20,8 @@ export const catalog = {
   },
 
   stockTokens: async (sql: Sql, mint: string, sort: Sort, limit: number, cursor?: string): Promise<z.infer<typeof StockTokensResponse>> => {
-    const stock = await stocksRepo.byMint(sql, mint);
+    const [stock, rows] = await Promise.all([stocksRepo.byMint(sql, mint), tokensRepo.byStock(sql, mint, sort, limit, decodeCursor(cursor))]);
     if (!stock) throw notFound("stock");
-    const rows = await tokensRepo.byStock(sql, mint, sort, limit, decodeCursor(cursor));
     const last = rows[rows.length - 1];
     const next = rows.length === limit && last
       ? encodeCursor(sort === "new" ? Number(last.created_at) : sort === "mcap" ? Number(last.mcap_usd ?? 0) : Number(last.vol_24h_usd ?? 0), last.mint)
@@ -31,10 +30,8 @@ export const catalog = {
   },
 
   token: async (sql: Sql, mint: string): Promise<TokenHeader> => {
-    const t = await tokensRepo.byMint(sql, mint);
+    const t = await tokensRepo.withStock(sql, mint);
     if (!t) throw notFound("token");
-    const s = await stocksRepo.byMint(sql, t.quote_mint);
-    if (!s) throw notFound("stock");
-    return shapeHeader(t, s);
+    return shapeHeader(t, t.stock);
   },
 };

@@ -18,7 +18,7 @@ export function marketOpen(now = new Date()): boolean {
 
 export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
   mint: r.mint, symbol: r.symbol, name: r.name, issuer: r.issuer, category: r.category, logo: r.logo,
-  priceUsd: num(r.price_usd), change24h: num(r.change_24h), memes: int(r.memes), marketOpen: open,
+  priceUsd: num(r.price_usd), change24h: num(r.change_24h), memes: int(r.memes ?? 0), marketOpen: open,
 });
 
 export const shapeToken = (r: TokenRow): TokenCard => ({

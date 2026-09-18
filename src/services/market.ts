@@ -1,7 +1,6 @@
 import type { Sql } from "../lib/db";
 import { marketRepo } from "../repos/market";
 import { tokensRepo } from "../repos/tokens";
-import { stocksRepo } from "../repos/stocks";
 import { notFound } from "../lib/errors";
 import { shapeCandle, shapeTrade } from "./shape";
 import type { CandlesResponse, TradesResponse, Timeframe } from "../contract";
@@ -14,10 +13,8 @@ export const market = {
   },
 
   trades: async (sql: Sql, mint: string, limit: number, before?: number): Promise<z.infer<typeof TradesResponse>> => {
-    const t = await tokensRepo.byMint(sql, mint);
+    const [t, rows] = await Promise.all([tokensRepo.withStock(sql, mint), marketRepo.trades(sql, mint, limit, before)]);
     if (!t) throw notFound("token");
-    const s = await stocksRepo.byMint(sql, t.quote_mint);
-    const rows = await marketRepo.trades(sql, mint, limit, before);
-    return { mint, trades: rows.map((r) => shapeTrade(r, t.decimals, s?.decimals ?? 8, s?.price_usd ?? null)) };
+    return { mint, trades: rows.map((r) => shapeTrade(r, t.decimals, t.stock.decimals, t.stock.price_usd)) };
   },
 };

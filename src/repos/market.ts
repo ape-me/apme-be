@@ -33,5 +33,5 @@ export const marketRepo = {
   },
   health: async (sql: Sql) => (await sql<{ last_slot: number; updated_at: number; newest_trade: number | null }[]>`
     SELECT max(last_slot)::bigint AS last_slot, max(updated_at)::bigint AS updated_at,
-           (SELECT max(block_time) FROM trades)::bigint AS newest_trade FROM cursor`)[0]!,
+           (SELECT block_time FROM trades ORDER BY block_time DESC LIMIT 1)::bigint AS newest_trade FROM cursor`)[0]!,
 };

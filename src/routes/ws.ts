@@ -4,10 +4,11 @@ import type { Env } from "../env";
 import { Mint } from "../contract";
 import { badRequest } from "../lib/errors";
 import { rooms, FLOOR } from "../services/rooms";
+import { rateLimited } from "../lib/ratelimit";
 
 export const ws = new Hono<{ Bindings: Env }>();
 
-ws.get("/:room", (c) => {
+ws.get("/:room", rateLimited, (c) => {
   const room = c.req.param("room");
   if (room !== FLOOR && !Mint.safeParse(room).success) throw badRequest("bad room");
   if (c.req.header("Upgrade") !== "websocket") throw badRequest("expected websocket");

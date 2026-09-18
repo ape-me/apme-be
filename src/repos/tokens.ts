@@ -1,4 +1,5 @@
 import type { Sql } from "../lib/db";
+import type { StockRow } from "./stocks";
 
 export type TokenRow = {
   mint: string; symbol: string | null; name: string | null; image: string | null; uri: string | null;
@@ -30,6 +31,11 @@ export const tokensRepo = {
   },
   byMint: async (sql: Sql, mint: string) => (await sql<TokenRow[]>`
     SELECT ${cols(sql)} FROM tokens t LEFT JOIN token_stats st ON st.token_mint = t.mint WHERE t.mint = ${mint}`)[0] ?? null,
+  // Token joined with its quote stock: one round trip for the token page header and the trades tape.
+  withStock: async (sql: Sql, mint: string) => (await sql<(TokenRow & { stock: StockRow })[]>`
+    SELECT ${cols(sql)}, row_to_json(s) AS stock
+    FROM tokens t LEFT JOIN token_stats st ON st.token_mint = t.mint JOIN stocks s ON s.mint = t.quote_mint
+    WHERE t.mint = ${mint}`)[0] ?? null,
   byMints: (sql: Sql, mints: string[]) => sql<TokenRow[]>`
     SELECT ${cols(sql)} FROM tokens t LEFT JOIN token_stats st ON st.token_mint = t.mint WHERE t.mint = ANY(${mints})`,
 };
