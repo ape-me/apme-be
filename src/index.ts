@@ -23,7 +23,7 @@ app.use("*", async (c, next) => {
 app.get("/", (c) => c.json({
   name: "apme-be",
   health: "/health",
-  reads: ["/v1/ticker?stonks=10&memes=10", "/v1/stocks", "/v1/stocks/:mint/tokens?sort=volume|new|mcap&limit&cursor", "/v1/tokens/:mint", "/v1/tokens/:mint/candles?tf=1m|5m|15m|1h|4h|1d&limit&before", "/v1/tokens/:mint/trades?limit&before"],
+  reads: ["/v1/ticker?stonks=10&memes=10", "/v1/floor?stock=&limit=30&<filters>", "/v1/tokens?column=new|graduating|graduated&stock=&sort=&limit&cursor&<filters>", "/v1/stocks", "/v1/stocks/:mint/tokens?sort=volume|new|mcap&limit&cursor", "/v1/tokens/:mint", "/v1/tokens/:mint/candles?tf=1m|5m|15m|1h|4h|1d&limit&before", "/v1/tokens/:mint/trades?limit&before"],
   live: ["wss: /ws/floor", "wss: /ws/:mint"],
   apelist: ["POST /api/apelist", "GET /api/apelist/count", "GET /api/apelist/confirm?t="],
 }));

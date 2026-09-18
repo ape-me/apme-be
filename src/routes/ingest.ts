@@ -25,6 +25,11 @@ ingest.post("/trades", async (c) => {
     push(t.mint, msg);
     push(FLOOR, msg);
   }
+  for (const tk of r.data.tokens) {
+    const msg: WsMessage = { t: "token", ...tk };
+    push(FLOOR, msg);
+    push(tk.mint, msg);
+  }
   c.executionCtx.waitUntil(rooms.publish(c.env, byRoom));
-  return c.json({ ok: true, trades: r.data.trades.length, rooms: byRoom.size });
+  return c.json({ ok: true, trades: r.data.trades.length, tokens: r.data.tokens.length, rooms: byRoom.size });
 });

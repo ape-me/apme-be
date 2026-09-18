@@ -4,7 +4,26 @@ import { z } from "zod";
 
 export const Mint = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "not a base58 pubkey");
 export const Timeframe = z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]);
-export const Sort = z.enum(["volume", "new", "mcap"]);
+export const Sort = z.enum(["volume", "new", "mcap", "vol5m", "vol1h", "vol24h", "txns1h", "progress", "change1h", "change24h"]);
+export const Column = z.enum(["new", "graduating", "graduated"]);
+export const Launchpad = z.enum(["stonkfun", "pumpfun", "dbc"]);
+
+// Filters shared by every token list. All optional, all combinable.
+export const TokenFilters = z.object({
+  minMcap: z.coerce.number().min(0).optional(), maxMcap: z.coerce.number().min(0).optional(),
+  minVol1h: z.coerce.number().min(0).optional(), minVol24h: z.coerce.number().min(0).optional(),
+  minAge: z.coerce.number().min(0).optional(), maxAge: z.coerce.number().min(0).optional(),           // minutes
+  minProgress: z.coerce.number().min(0).max(100).optional(), maxProgress: z.coerce.number().min(0).max(100).optional(),
+  minTxns1h: z.coerce.number().int().min(0).optional(), minBuys24h: z.coerce.number().int().min(0).optional(),
+  maxTax: z.coerce.number().int().min(0).optional(),                                                   // bps
+  minHolders: z.coerce.number().int().min(0).optional(), maxTop10: z.coerce.number().min(0).max(100).optional(),
+  maxDev: z.coerce.number().min(0).max(100).optional(), maxSnipers: z.coerce.number().min(0).max(100).optional(),
+  launchpad: z.string().regex(/^[a-z,]+$/).optional(),                                                  // csv of Launchpad
+  dexPaid: z.coerce.number().int().min(0).max(1).optional(),
+  social: z.coerce.number().int().min(0).max(1).optional(),
+  q: z.string().max(44).optional(),
+});
+export type TokenFilters = z.infer<typeof TokenFilters>;
 export const Limit = z.coerce.number().int().min(1).max(500);
 export const Cursor = z.string().max(200).optional();
 
@@ -21,6 +40,12 @@ export const TokenCard = z.object({
   priceQuote: z.number().nullable(), priceUsd: z.number().nullable(), mcapUsd: z.number().nullable(),
   vol24hUsd: z.number(), buys24h: z.number().int(), sells24h: z.number().int(), change24h: z.number().nullable(),
   taxBps: z.number().int(), progressPct: z.number().nullable(), lastTradeAt: z.number().int().nullable(),
+  vol5mUsd: z.number(), buys5m: z.number().int(), sells5m: z.number().int(),
+  vol1hUsd: z.number(), buys1h: z.number().int(), sells1h: z.number().int(), change1h: z.number().nullable(),
+  athMcapUsd: z.number().nullable(),
+  holders: z.number().int().nullable(), top10Pct: z.number().nullable(), devPct: z.number().nullable(), snipersPct: z.number().nullable(),
+  website: z.string().nullable(), twitter: z.string().nullable(), telegram: z.string().nullable(),
+  dexPaid: z.boolean(), dexPaidAt: z.number().int().nullable(), dexBoosts: z.number().int(),
 });
 export type TokenCard = z.infer<typeof TokenCard>;
 
@@ -44,15 +69,22 @@ export const StocksResponse = z.object({ stocks: z.array(Stock), asOf: z.number(
 export const StockTokensResponse = z.object({ stock: Stock, tokens: z.array(TokenCard), next: z.string().nullable() });
 export const CandlesResponse = z.object({ mint: Mint, tf: Timeframe, candles: z.array(Candle) });
 export const TradesResponse = z.object({ mint: Mint, trades: z.array(Trade) });
+export const TokensResponse = z.object({ tokens: z.array(TokenCard), next: z.string().nullable() });
+export const FloorResponse = z.object({ stock: Stock.nullable(), new: z.array(TokenCard), graduating: z.array(TokenCard), graduated: z.array(TokenCard), asOf: z.number().int() });
 
 // Indexer → Worker. One batch every 250ms. Signed with HMAC-SHA256 over the raw body.
 export const IngestTrade = Trade.extend({ mint: Mint, pool: z.string(), program: z.string() });
-export const IngestBatch = z.object({ trades: z.array(IngestTrade).max(2000), sentAt: z.number().int() });
+export const IngestToken = z.object({
+  event: z.enum(["created", "graduated"]), mint: Mint, symbol: z.string().nullable(), name: z.string().nullable(), quoteMint: Mint,
+  launchpad: z.string(), creator: z.string().nullable(), createdAt: z.number().int(), ts: z.number().int(),
+});
+export const IngestBatch = z.object({ trades: z.array(IngestTrade).max(2000), tokens: z.array(IngestToken).max(200).default([]), sentAt: z.number().int() });
 export type IngestBatch = z.infer<typeof IngestBatch>;
 
 // Worker → phone over WebSocket.
 export const WsTrade = z.object({ t: z.literal("trade"), mint: Mint }).merge(Trade);
-export const WsNewToken = z.object({ t: z.literal("token"), token: TokenCard });
+// A token was created (curve pool initialised) or graduated (AMM pool appeared). Fetch /v1/tokens/:mint for the full card.
+export const WsNewToken = z.object({ t: z.literal("token") }).merge(IngestToken);
 export const WsStats = z.object({ t: z.literal("stats"), asOf: z.number().int(), tokens: z.array(TokenCard.pick({ mint: true, priceUsd: true, mcapUsd: true, vol24hUsd: true, change24h: true, buys24h: true, sells24h: true, lastTradeAt: true })) });
 export const WsMessage = z.discriminatedUnion("t", [WsTrade, WsNewToken, WsStats]);
 export type WsMessage = z.infer<typeof WsMessage>;

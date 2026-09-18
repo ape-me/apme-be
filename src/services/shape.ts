@@ -26,6 +26,12 @@ export const shapeToken = (r: TokenRow): TokenCard => ({
   phase: r.phase, createdAt: int(r.created_at), priceQuote: num(r.price_quote), priceUsd: num(r.price_usd),
   mcapUsd: num(r.mcap_usd), vol24hUsd: int(r.vol_24h_usd), buys24h: int(r.buys_24h), sells24h: int(r.sells_24h),
   change24h: num(r.change_24h), taxBps: int(r.tax_bps), progressPct: num(r.progress_pct), lastTradeAt: num(r.last_trade_at),
+  vol5mUsd: int(r.vol_5m_usd), buys5m: int(r.buys_5m), sells5m: int(r.sells_5m),
+  vol1hUsd: int(r.vol_1h_usd), buys1h: int(r.buys_1h), sells1h: int(r.sells_1h), change1h: num(r.change_1h),
+  athMcapUsd: num(r.ath_mcap_usd),
+  holders: num(r.holders), top10Pct: num(r.top10_pct), devPct: num(r.dev_pct), snipersPct: num(r.snipers_pct),
+  website: r.website, twitter: r.twitter, telegram: r.telegram,
+  dexPaid: Boolean(r.dex_paid), dexPaidAt: num(r.dex_paid_at), dexBoosts: int(r.dex_boosts),
 });
 
 export const shapeHeader = (r: TokenRow, s: StockRow): TokenHeader => ({
