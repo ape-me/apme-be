@@ -36,3 +36,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # wrangler
 .wrangler
 .dev.vars
+.pg_ro_pw
+.tunnel_id
