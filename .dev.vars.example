@@ -1,2 +1,3 @@
 INGEST_SECRET=change-me
 DATABASE_URL=postgres://apeme_ro:password@127.0.0.1:5432/apeme
+METRICS_TOKEN=dev-metrics

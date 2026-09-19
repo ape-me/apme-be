@@ -26,6 +26,7 @@ app.get("/", (c) => c.json({
   reads: ["/v1/ticker?stonks=10&memes=10", "/v1/floor?stock=&limit=30&<filters>", "/v1/tokens?column=new|graduating|graduated&stock=&sort=&limit&cursor&<filters>", "/v1/stocks", "/v1/stocks/:mint/tokens?sort=volume|new|mcap&limit&cursor", "/v1/tokens/:mint", "/v1/tokens/:mint/candles?tf=1m|5m|15m|1h|4h|1d&limit&before", "/v1/tokens/:mint/trades?limit&before"],
   live: ["wss: /ws/floor", "wss: /ws/:mint"],
   apelist: ["POST /api/apelist", "GET /api/apelist/count", "GET /api/apelist/confirm?t="],
+  ops: ["GET /health", "GET /metrics (bearer)"],
 }));
 
 app.get("/health", withDb, async (c) => {
@@ -39,6 +40,17 @@ app.get("/health", withDb, async (c) => {
   } catch (e) {
     return c.json({ ok: false, env: c.env.ENV, db: "error", error: (e as Error).message, now }, 503);
   }
+});
+
+// Prometheus text format for the ops box: numbers that live in D1, not Postgres (waitlist).
+app.get("/metrics", async (c) => {
+  if (!c.env.METRICS_TOKEN || c.req.header("authorization") !== `Bearer ${c.env.METRICS_TOKEN}`) return c.text("unauthorized", 401);
+  const r = await c.env.DB.prepare("SELECT COUNT(*) AS total, SUM(confirmed_at IS NOT NULL) AS confirmed FROM apelist").first<{ total: number; confirmed: number }>();
+  const lines = [
+    "# TYPE apeme_apelist_signups_total gauge", `apeme_apelist_signups_total ${r?.total ?? 0}`,
+    "# TYPE apeme_apelist_confirmed_total gauge", `apeme_apelist_confirmed_total ${r?.confirmed ?? 0}`,
+  ];
+  return c.text(lines.join("\n") + "\n", 200, { "content-type": "text/plain; version=0.0.4" });
 });
 
 app.route("/api/apelist", apelistRoute);

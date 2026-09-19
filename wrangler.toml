@@ -27,7 +27,7 @@ class_name = "Room"
 tag = "v1"
 new_sqlite_classes = ["Room"]
 
-# secrets (wrangler secret put): INGEST_SECRET
+# secrets (wrangler secret put): INGEST_SECRET, METRICS_TOKEN
 
 # Per-IP rate limits. Reads: 600/min. Ingest is HMAC-gated, no limit.
 [[unsafe.bindings]]
