@@ -72,7 +72,7 @@ const filterWhere = (sql: Sql, f: TokenFilters, now: number) => {
   if (f.maxTop10 != null) parts.push(sql`AND st.top10_pct <= ${f.maxTop10}`);
   if (f.maxDev != null) parts.push(sql`AND st.dev_pct <= ${f.maxDev}`);
   if (f.maxSnipers != null) parts.push(sql`AND st.snipers_pct <= ${f.maxSnipers}`);
-  if (f.launchpad) { const l = f.launchpad.split(",").filter((x) => LAUNCHPADS.includes(x)); if (l.length) parts.push(sql`AND t.launchpad = ANY(${l})`); }
+  if (f.launchpad) { const l = f.launchpad.split(",").filter((x) => LAUNCHPADS.includes(x)); if (l.length) parts.push(sql`AND t.launchpad IN ${sql(l)}`); }   // array params 500 through Hyperdrive; IN list binds scalars
   if (f.dexPaid === 1) parts.push(sql`AND t.dex_paid`);
   if (f.social === 1) parts.push(sql`AND (t.website IS NOT NULL OR t.twitter IS NOT NULL OR t.telegram IS NOT NULL)`);
   if (f.q) { const q = f.q.trim(); if (q) parts.push(sql`AND (t.symbol ILIKE ${"%" + q + "%"} OR t.name ILIKE ${"%" + q + "%"} OR t.mint LIKE ${q + "%"})`); }
