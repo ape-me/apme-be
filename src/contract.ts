@@ -42,6 +42,18 @@ export const Stock = z.object({
   king: King.nullable(),
 });
 export const Issuer = z.enum(["xstocks", "backpack", "prestocks"]);
+
+// Stock price line for the Invest-mode chart. One point per bucket, oldest → newest; `mark` is the fair value if known.
+export const HistoryRange = z.enum(["1h", "1d", "1w", "1m"]);
+export const HistoryPoint = z.object({ t: z.number().int(), price: z.number(), mark: z.number().nullable() });
+export const HistoryResponse = z.object({
+  mint: Mint, range: HistoryRange, from: z.number().int(), to: z.number().int(),
+  points: z.array(HistoryPoint), changeAbs: z.number().nullable(), changePct: z.number().nullable(),
+});
+// Home screen: hand-picked groups (ids are stable) and the three movers lists, all full Stock objects.
+export const Collection = z.object({ id: z.string(), title: z.string(), tagline: z.string(), stocks: z.array(Stock) });
+export const CollectionsResponse = z.object({ collections: z.array(Collection), asOf: z.number().int() });
+export const MoversResponse = z.object({ gainers: z.array(Stock), losers: z.array(Stock), mostTraded: z.array(Stock), asOf: z.number().int() });
 export type Issuer = z.infer<typeof Issuer>;
 export type Stock = z.infer<typeof Stock>;
 

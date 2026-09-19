@@ -4,7 +4,7 @@ import { tokensRepo, defaultSort, type Sort, type Column } from "../repos/tokens
 import { tickerRepo } from "../repos/ticker";
 import { notFound } from "../lib/errors";
 import { shapeStock, shapeToken, shapeHeader, marketOpen } from "./shape";
-import type { StocksResponse, StockTokensResponse, TokenHeader, TickerResponse, TokensResponse, FloorResponse, TokenFilters } from "../contract";
+import type { StocksResponse, StockTokensResponse, TokenHeader, TickerResponse, TokensResponse, FloorResponse, TokenFilters, CollectionsResponse, MoversResponse } from "../contract";
 import type { z } from "zod";
 
 const encodeCursor = (v: number, mint: string) => btoa(`${v}:${mint}`);
@@ -12,6 +12,23 @@ const decodeCursor = (c?: string) => {
   if (!c) return undefined;
   try { const [v, mint] = atob(c).split(":"); return v && mint ? { v: Number(v), mint } : undefined; } catch { return undefined; }
 };
+
+const MOVER_MIN_LIQUIDITY = 20_000;
+const MOVER_MAX_PREMIUM = 15;          // percent off the real price
+const MOVER_DEEP_LIQUIDITY = 500_000;  // trusted without a mark
+
+// Order matters: this is the order the home screen shows them.
+const COLLECTIONS: readonly { id: string; title: string; tagline: string; issuer?: string; category?: string; symbols?: readonly string[] }[] = [
+  { id: "preipo", title: "Pre-IPO", tagline: "Private companies, before the IPO", issuer: "prestocks" },
+  { id: "ai", title: "AI", tagline: "The models and the chips behind them", symbols: ["OPENAI", "ANTHROPIC", "NVDAX", "AMD", "MU", "PLTRX", "NBIS", "MRVL", "SKHY", "SNDK", "DRAM", "FIGUREAI", "NEURALINK", "QUBT"] },
+  { id: "mag7", title: "Big Tech", tagline: "The seven that move the market", symbols: ["APPLX", "MSFTX", "NVDAX", "AMZNX", "GOOGLX", "METAX", "TSLAX"] },
+  { id: "crypto-stocks", title: "Crypto stocks", tagline: "Public companies that live on crypto", symbols: ["COINX", "CRCLX", "HOODX", "MSTRX", "STRCX", "WULF", "DFDV", "VIDAX"] },
+  { id: "memestocks", title: "Meme stocks", tagline: "The originals", symbols: ["GMEX", "AMC", "DJT", "BB", "RUM", "WEBULL", "RBLX", "SNAP"] },
+  { id: "prediction", title: "Bets & markets", tagline: "Prediction markets, sportsbooks, casinos", symbols: ["KALSHI", "POLYMARKET", "DKNG", "MGM"] },
+  { id: "defense", title: "Defense & space", tagline: "Hardware for hard times", symbols: ["ANDURIL", "LMT", "BOEING"] },
+  { id: "health", title: "Health", tagline: "Pharma and care", symbols: ["LLY", "JNJ", "PFIZER", "MRNA", "HIMS"] },
+  { id: "etf", title: "ETFs & commodities", tagline: "Whole markets in one token", category: "etf" },
+];
 
 export const catalog = {
   ticker: async (sql: Sql, stonks: number, memes: number): Promise<z.infer<typeof TickerResponse>> => {
@@ -28,6 +45,30 @@ export const catalog = {
     const rows = await stocksRepo.all(sql);
     const keep = issuers?.length ? rows.filter((r) => issuers.includes(r.issuer)) : rows;   // 94 rows, cheaper than a second query plan
     return { stocks: keep.map((r) => shapeStock(r, open)), asOf: Math.floor(Date.now() / 1000) };
+  },
+  // Home screen groups. Hand-picked by symbol so the app never hard-codes a list; a symbol the DB doesn't have is skipped.
+  collections: async (sql: Sql): Promise<z.infer<typeof CollectionsResponse>> => {
+    const open = marketOpen();
+    const rows = await stocksRepo.all(sql);
+    const bySym = new Map(rows.map((r) => [r.symbol, r]));
+    const pick = (syms: readonly string[]) => syms.map((x) => bySym.get(x)).filter((r): r is NonNullable<typeof r> => !!r).map((r) => shapeStock(r, open));
+    const collections = COLLECTIONS.map((c) => ({
+      id: c.id, title: c.title, tagline: c.tagline,
+      stocks: c.issuer ? rows.filter((r) => r.issuer === c.issuer).map((r) => shapeStock(r, open)) : c.category ? rows.filter((r) => r.category === c.category).map((r) => shapeStock(r, open)) : pick(c.symbols ?? []),
+    })).filter((c) => c.stocks.length);
+    return { collections, asOf: Math.floor(Date.now() / 1000) };
+  },
+  // Gainers / losers / most traded over 24h. A thin pool can print "+170%" on BABA while the real share is flat,
+  // so a stock qualifies only when its token tracks the real price (small premium) or is deep enough to trust.
+  movers: async (sql: Sql, limit: number): Promise<z.infer<typeof MoversResponse>> => {
+    const open = marketOpen();
+    const rows = (await stocksRepo.all(sql)).filter((r) => r.price_usd != null && (r.liquidity_usd ?? 0) >= MOVER_MIN_LIQUIDITY
+      && (r.premium_pct != null ? Math.abs(r.premium_pct) <= MOVER_MAX_PREMIUM : (r.liquidity_usd ?? 0) >= MOVER_DEEP_LIQUIDITY));
+    const by = (f: (r: (typeof rows)[number]) => number, desc = true) => [...rows].sort((a, b) => (desc ? f(b) - f(a) : f(a) - f(b))).slice(0, limit).map((r) => shapeStock(r, open));
+    return {
+      gainers: by((r) => r.change_24h ?? 0), losers: by((r) => r.change_24h ?? 0, false),
+      mostTraded: by((r) => r.vol_24h_usd ?? 0), asOf: Math.floor(Date.now() / 1000),
+    };
   },
   stock: async (sql: Sql, mint: string) => {
     const row = await stocksRepo.byMint(sql, mint);

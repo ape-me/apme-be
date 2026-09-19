@@ -25,6 +25,13 @@ export const marketRepo = {
         FROM candles_1m WHERE token_mint = ${mint} ${upper}
         GROUP BY 1 ORDER BY 1 DESC LIMIT ${limit}) x ORDER BY t`;
   },
+  // Stock price line from stock_snapshots (one row per minute). Bucket size grows with the range so a
+  // month is ~720 points, not 43k. First price in each bucket; mark is the fair value at that time.
+  history: (sql: Sql, mint: string, from: number, step: number) => sql<{ t: number; price: number; mark: number | null }[]>`
+      SELECT (ts / ${step}) * ${step} AS t,
+             (array_agg(price_usd ORDER BY ts))[1] AS price, (array_agg(mark_usd ORDER BY ts))[1] AS mark
+      FROM stock_snapshots WHERE mint = ${mint} AND ts >= ${from} AND price_usd IS NOT NULL
+      GROUP BY 1 ORDER BY 1`,
   trades: (sql: Sql, mint: string, limit: number, before?: number) => {
     const upper = before ? sql`AND block_time < ${before}` : sql``;
     return sql<TradeRow[]>`
