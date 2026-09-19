@@ -1,4 +1,5 @@
 // Row → contract. The only place DB column names meet API field names.
+import { tagsFor } from "./collections";
 import type { Stock, TokenCard, TokenHeader, Trade, Candle } from "../contract";
 import type { StockRow } from "../repos/stocks";
 import type { TokenRow } from "../repos/tokens";
@@ -17,6 +18,7 @@ export function marketOpen(now = new Date()): boolean {
 }
 
 export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
+  tags: tagsFor(r),
   mint: r.mint, symbol: r.symbol, name: r.name, issuer: r.issuer, category: r.category, logo: r.logo,
   priceUsd: num(r.price_usd), change24h: num(r.change_24h), memes: int(r.memes ?? 0), marketOpen: open,
   markUsd: r.mark_usd == null ? null : Math.round(r.mark_usd * 100) / 100, premiumPct: r.premium_pct == null ? null : Math.round(r.premium_pct * 100) / 100, liquidityUsd: r.liquidity_usd == null ? null : Math.round(r.liquidity_usd),

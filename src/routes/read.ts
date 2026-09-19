@@ -8,6 +8,8 @@ import { badRequest } from "../lib/errors";
 import { Mint, Timeframe, Sort, Column, Limit, Cursor, TokenFilters, Issuer, HistoryRange } from "../contract";
 import { catalog } from "../services/catalog";
 import { market } from "../services/market";
+import { wallet } from "../services/portfolio";
+import { COLLECTION_IDS } from "../services/collections";
 
 const parse = <T>(schema: z.ZodType<T>, v: unknown): T => {
   const r = schema.safeParse(v);
@@ -25,9 +27,9 @@ read.get("/ticker", (c) => cached(c.req.raw, 3, async () => {
 
 read.get("/stocks", (c) => cached(c.req.raw, 5, async () => {
   // ?issuer=prestocks  or  ?issuer=xstocks,backpack
-  const q = parse(z.object({ issuer: z.string().optional() }), c.req.query());
+  const q = parse(z.object({ issuer: z.string().optional(), collection: z.enum(COLLECTION_IDS as [string, ...string[]]).optional() }), c.req.query());
   const issuers = q.issuer ? parse(z.array(Issuer), q.issuer.split(",")) : undefined;
-  return c.json(await catalog.stocks(c.get("sql"), issuers));
+  return c.json(await catalog.stocks(c.get("sql"), issuers, q.collection));
 }));
 
 read.get("/collections", (c) => cached(c.req.raw, 10, async () => c.json(await catalog.collections(c.get("sql")))));
@@ -40,6 +42,13 @@ read.get("/stocks/:mint/history", (c) => cached(c.req.raw, 30, async () => {
   const mint = parse(Mint, c.req.param("mint"));
   const q = parse(z.object({ range: HistoryRange.default("1d") }), c.req.query());
   return c.json(await market.history(c.get("sql"), mint, q.range));
+}));
+
+// Portfolio tab. Address = the user's Privy wallet. Chain read + our tape, so 5s cache is plenty.
+read.get("/wallet/:address", (c) => cached(c.req.raw, 5, async () => {
+  const address = parse(Mint, c.req.param("address"));
+  const q = parse(z.object({ activity: Limit.default(50) }), c.req.query());
+  return c.json(await wallet(c.env, c.get("sql"), address, q.activity));
 }));
 
 read.get("/stocks/:mint", (c) => cached(c.req.raw, 5, async () => c.json(await catalog.stock(c.get("sql"), parse(Mint, c.req.param("mint"))))));

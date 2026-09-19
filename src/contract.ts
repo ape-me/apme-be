@@ -40,6 +40,7 @@ export const Stock = z.object({
   // its floor, last 24h
   heat: z.number(), launched24h: z.number().int(), memeVol24hUsd: z.number(), wallets24h: z.number().int(),
   king: King.nullable(),
+  tags: z.array(z.string()),   // collection ids this stock belongs to, e.g. ["ai","mag7"]; filter with /stocks?collection=
 });
 export const Issuer = z.enum(["xstocks", "backpack", "prestocks"]);
 
@@ -53,6 +54,22 @@ export const HistoryResponse = z.object({
 // Home screen: hand-picked groups (ids are stable) and the three movers lists, all full Stock objects.
 export const Collection = z.object({ id: z.string(), title: z.string(), tagline: z.string(), stocks: z.array(Stock) });
 export const CollectionsResponse = z.object({ collections: z.array(Collection), asOf: z.number().int() });
+// Portfolio. Holdings come from the chain; cost basis and P&L from our own trade tape, so they exist only for
+// tokens this wallet traded on floors we index (null otherwise). Values in USD at current prices.
+export const Holding = z.object({
+  mint: z.string(), kind: z.enum(["sol", "stock", "meme"]), symbol: z.string().nullable(), name: z.string().nullable(), image: z.string().nullable(),
+  quoteSymbol: z.string().nullable(), amount: z.number(), priceUsd: z.number().nullable(), valueUsd: z.number().nullable(), change24h: z.number().nullable(),
+  costUsd: z.number().nullable(), pnlUsd: z.number().nullable(), pnlPct: z.number().nullable(),
+});
+export const Activity = z.object({
+  sig: z.string(), ts: z.number().int(), side: z.enum(["buy", "sell"]), mint: Mint, symbol: z.string().nullable(), image: z.string().nullable(),
+  stockSymbol: z.string(), amount: z.number(), quote: z.number(), usd: z.number().nullable(),
+});
+export const WalletResponse = z.object({
+  address: z.string(), totalUsd: z.number(), solUsd: z.number(), stocksUsd: z.number(), memesUsd: z.number(),
+  costUsd: z.number(), pnlUsd: z.number(), realizedUsd: z.number(),
+  holdings: z.array(Holding), activity: z.array(Activity), asOf: z.number().int(),
+});
 export const MoversResponse = z.object({ gainers: z.array(Stock), losers: z.array(Stock), mostTraded: z.array(Stock), asOf: z.number().int() });
 export type Issuer = z.infer<typeof Issuer>;
 export type Stock = z.infer<typeof Stock>;
