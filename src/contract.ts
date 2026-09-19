@@ -27,11 +27,22 @@ export type TokenFilters = z.infer<typeof TokenFilters>;
 export const Limit = z.coerce.number().int().min(1).max(500);
 export const Cursor = z.string().max(200).optional();
 
+export const King = z.object({ mint: Mint, symbol: z.string().nullable(), image: z.string().nullable(), vol24hUsd: z.number() });
+export type King = z.infer<typeof King>;
+
 export const Stock = z.object({
   mint: Mint, symbol: z.string(), name: z.string(), issuer: z.string(), category: z.string(),
   logo: z.string().nullable(), priceUsd: z.number().nullable(), change24h: z.number().nullable(),
   memes: z.number().int(), marketOpen: z.boolean(),
+  // the stock itself (Jupiter price, DexScreener depth/volume; PreStocks mark or the real underlying price)
+  markUsd: z.number().nullable(), premiumPct: z.number().nullable(), liquidityUsd: z.number().nullable(),
+  stockVol24hUsd: z.number().nullable(), buys24h: z.number().int().nullable(), sells24h: z.number().int().nullable(),
+  // its floor, last 24h
+  heat: z.number(), launched24h: z.number().int(), memeVol24hUsd: z.number(), wallets24h: z.number().int(),
+  king: King.nullable(),
 });
+export const Issuer = z.enum(["xstocks", "backpack", "prestocks"]);
+export type Issuer = z.infer<typeof Issuer>;
 export type Stock = z.infer<typeof Stock>;
 
 export const TokenCard = z.object({
@@ -73,7 +84,7 @@ export const TokensResponse = z.object({ tokens: z.array(TokenCard), next: z.str
 export const FloorResponse = z.object({ stock: Stock.nullable(), new: z.array(TokenCard), graduating: z.array(TokenCard), graduated: z.array(TokenCard), asOf: z.number().int() });
 
 // Indexer → Worker. One batch every 250ms. Signed with HMAC-SHA256 over the raw body.
-export const IngestTrade = Trade.extend({ mint: Mint, pool: z.string(), program: z.string() });
+export const IngestTrade = Trade.extend({ mint: Mint, pool: z.string(), program: z.string(), quoteMint: Mint.optional() });
 export const IngestToken = z.object({
   event: z.enum(["created", "graduated"]), mint: Mint, symbol: z.string().nullable(), name: z.string().nullable(), quoteMint: Mint,
   launchpad: z.string(), creator: z.string().nullable(), createdAt: z.number().int(), ts: z.number().int(),

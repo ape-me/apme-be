@@ -10,7 +10,8 @@ export const ws = new Hono<{ Bindings: Env }>();
 
 ws.get("/:room", rateLimited, (c) => {
   const room = c.req.param("room");
-  if (room !== FLOOR && !Mint.safeParse(room).success) throw badRequest("bad room");
+  const isStock = room.startsWith("stock:") && Mint.safeParse(room.slice(6)).success;
+  if (room !== FLOOR && !isStock && !Mint.safeParse(room).success) throw badRequest("bad room");
   if (c.req.header("Upgrade") !== "websocket") throw badRequest("expected websocket");
   return rooms.stub(c.env, room).fetch(c.req.raw);
 });

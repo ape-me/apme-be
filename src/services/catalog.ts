@@ -23,10 +23,16 @@ export const catalog = {
     };
   },
 
-  stocks: async (sql: Sql): Promise<z.infer<typeof StocksResponse>> => {
+  stocks: async (sql: Sql, issuers?: string[]): Promise<z.infer<typeof StocksResponse>> => {
     const open = marketOpen();
     const rows = await stocksRepo.all(sql);
-    return { stocks: rows.map((r) => shapeStock(r, open)), asOf: Math.floor(Date.now() / 1000) };
+    const keep = issuers?.length ? rows.filter((r) => issuers.includes(r.issuer)) : rows;   // 94 rows, cheaper than a second query plan
+    return { stocks: keep.map((r) => shapeStock(r, open)), asOf: Math.floor(Date.now() / 1000) };
+  },
+  stock: async (sql: Sql, mint: string) => {
+    const row = await stocksRepo.byMint(sql, mint);
+    if (!row) throw notFound("stock");
+    return shapeStock(row);
   },
 
   // Any token list: per stock or global, optional column, filters, sort, cursor. `next` is null on the last page.

@@ -5,7 +5,7 @@ import type { Env } from "../env";
 import { verify } from "../lib/hmac";
 import { badRequest, unauthorized } from "../lib/errors";
 import { IngestBatch, type WsMessage } from "../contract";
-import { rooms, FLOOR } from "../services/rooms";
+import { rooms, FLOOR, STOCK } from "../services/rooms";
 
 export const ingest = new Hono<{ Bindings: Env }>();
 
@@ -20,15 +20,17 @@ ingest.post("/trades", async (c) => {
   const byRoom = new Map<string, WsMessage[]>();
   const push = (room: string, m: WsMessage) => byRoom.set(room, [...(byRoom.get(room) ?? []), m]);
   for (const t of r.data.trades) {
-    const { pool: _p, program: _g, ...rest } = t;
+    const { pool: _p, program: _g, quoteMint, ...rest } = t;
     const msg: WsMessage = { t: "trade", ...rest };
     push(t.mint, msg);
     push(FLOOR, msg);
+    if (quoteMint) push(STOCK(quoteMint), msg);   // the stock page's live tape
   }
   for (const tk of r.data.tokens) {
     const msg: WsMessage = { t: "token", ...tk };
     push(FLOOR, msg);
     push(tk.mint, msg);
+    push(STOCK(tk.quoteMint), msg);
   }
   c.executionCtx.waitUntil(rooms.publish(c.env, byRoom));
   return c.json({ ok: true, trades: r.data.trades.length, tokens: r.data.tokens.length, rooms: byRoom.size });

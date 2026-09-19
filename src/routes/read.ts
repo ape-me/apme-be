@@ -5,7 +5,7 @@ import { withDb, type DbVars } from "../lib/db";
 import { rateLimited } from "../lib/ratelimit";
 import { cached } from "../lib/cache";
 import { badRequest } from "../lib/errors";
-import { Mint, Timeframe, Sort, Column, Limit, Cursor, TokenFilters } from "../contract";
+import { Mint, Timeframe, Sort, Column, Limit, Cursor, TokenFilters, Issuer } from "../contract";
 import { catalog } from "../services/catalog";
 import { market } from "../services/market";
 
@@ -23,7 +23,14 @@ read.get("/ticker", (c) => cached(c.req.raw, 3, async () => {
   return c.json(await catalog.ticker(c.get("sql"), q.stonks, q.memes));
 }));
 
-read.get("/stocks", (c) => cached(c.req.raw, 5, async () => c.json(await catalog.stocks(c.get("sql")))));
+read.get("/stocks", (c) => cached(c.req.raw, 5, async () => {
+  // ?issuer=prestocks  or  ?issuer=xstocks,backpack
+  const q = parse(z.object({ issuer: z.string().optional() }), c.req.query());
+  const issuers = q.issuer ? parse(z.array(Issuer), q.issuer.split(",")) : undefined;
+  return c.json(await catalog.stocks(c.get("sql"), issuers));
+}));
+
+read.get("/stocks/:mint", (c) => cached(c.req.raw, 5, async () => c.json(await catalog.stock(c.get("sql"), parse(Mint, c.req.param("mint"))))));
 
 const ListQuery = TokenFilters.extend({ column: Column.optional(), sort: Sort.optional(), limit: Limit.default(50), cursor: Cursor });
 
