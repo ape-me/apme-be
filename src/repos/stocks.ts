@@ -2,7 +2,7 @@ import type { Sql } from "../lib/db";
 
 export type StockRow = {
   mint: string; symbol: string; name: string; issuer: string; category: string; decimals: number;
-  logo: string | null; price_usd: number | null; change_24h: number | null; memes?: number;
+  logo: string | null; price_usd: number | null; change_24h: number | null; memes?: number; multiplier: number;
   mark_usd: number | null; premium_pct: number | null; liquidity_usd: number | null;
   vol_24h_usd: number | null; buys_24h: number | null; sells_24h: number | null;
   heat: number; launched_24h: number; meme_vol_24h: number; wallets_24h: number;
@@ -14,7 +14,7 @@ export type StockRow = {
 // One row per stock: its own market data (stocks) plus what its floor did in the last 24h (stock_stats,
 // refreshed every 60s by the indexer). `crypto` pairs are never stocks.
 const select = (sql: Sql, where: ReturnType<Sql>) => sql<StockRow[]>`
-  SELECT s.mint, s.symbol, s.name, s.issuer, s.category, s.decimals, s.logo, s.price_usd, s.change_24h,
+  SELECT s.mint, s.symbol, s.name, s.issuer, s.category, s.decimals, s.logo, s.price_usd, s.change_24h, s.multiplier,
          s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h,
          (SELECT count(*)::int FROM tokens k WHERE k.quote_mint = s.mint) AS memes,
          coalesce(ss.launched_24h, 0) AS launched_24h, coalesce(ss.meme_vol_24h, 0) AS meme_vol_24h,

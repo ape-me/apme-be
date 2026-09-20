@@ -25,7 +25,9 @@ export async function wallet(env: Env, sql: Sql, address: string, activityLimit:
   for (const t of tokens) {
     const m = meta.get(t.mint);
     if (!m) continue;                                             // not a stock or a meme we index: hidden, not our business
-    const value = m.price_usd == null ? null : t.amount * m.price_usd;
+    // RPC's uiAmount ignores the scaled-UI multiplier (verified), so a stock's displayed amount is raw × multiplier.
+    const amount = m.kind === "stock" ? t.amount * Number(m.multiplier ?? 1) : t.amount;
+    const value = m.price_usd == null ? null : amount * m.price_usd;
     if (m.kind === "stock") stocksUsd += value ?? 0; else memesUsd += value ?? 0;
     // Cost basis: average price paid across every buy on our tape, applied to what is still held.
     const p = pos.get(t.mint);
@@ -33,14 +35,14 @@ export async function wallet(env: Env, sql: Sql, address: string, activityLimit:
     if (p && Number(p.bought_raw) > 0) {
       const boughtAmt = Number(p.bought_raw) / 10 ** m.decimals;
       const avg = p.bought_usd / boughtAmt;
-      cost = avg * t.amount;
+      cost = avg * t.amount;   // memes only reach here (stocks aren't on our tape), raw units on both sides
       costUsd += cost;
       if (value != null) { pnl = value - cost; pnlUsd += pnl; pnlPct = cost > 0 ? (pnl / cost) * 100 : null; }
       realizedUsd += p.sold_usd - avg * (Number(p.sold_raw) / 10 ** m.decimals);
     }
     holdings.push({
       mint: t.mint, kind: m.kind, symbol: m.symbol, name: m.name, image: m.image, quoteSymbol: m.quote_symbol,
-      amount: t.amount, priceUsd: m.price_usd, valueUsd: round(value), change24h: m.change_24h,
+      amount, priceUsd: m.price_usd, valueUsd: round(value), change24h: m.change_24h,
       costUsd: round(cost), pnlUsd: round(pnl), pnlPct: round(pnlPct),
     });
   }

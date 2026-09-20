@@ -30,6 +30,6 @@ export const market = {
   trades: async (sql: Sql, mint: string, limit: number, before?: number): Promise<z.infer<typeof TradesResponse>> => {
     const [t, rows] = await Promise.all([tokensRepo.withStock(sql, mint), marketRepo.trades(sql, mint, limit, before)]);
     if (!t) throw notFound("token");
-    return { mint, trades: rows.map((r) => shapeTrade(r, t.decimals, t.stock.decimals, t.stock.price_usd)) };
+    return { mint, trades: rows.map((r) => shapeTrade(r, t.decimals, t.stock.decimals, t.stock.price_usd == null ? null : Number(t.stock.price_usd) * Number(t.stock.multiplier ?? 1))) };
   },
 };

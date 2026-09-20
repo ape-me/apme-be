@@ -21,14 +21,14 @@ export const walletRepo = {
     GROUP BY token_mint`,
   activity: (sql: Sql, wallet: string, limit: number) => sql<ActivityRow[]>`
     SELECT tr.signature, tr.block_time, tr.side, tr.token_mint, t.symbol, t.image, tr.base_raw::text AS base_raw, tr.quote_raw::text AS quote_raw,
-           tr.quote_usd, t.decimals, t.quote_mint, s.symbol AS stock_symbol, s.decimals AS quote_decimals, s.price_usd AS stock_price_usd
+           tr.quote_usd, t.decimals, t.quote_mint, s.symbol AS stock_symbol, s.decimals AS quote_decimals, s.price_usd * s.multiplier AS stock_price_usd
     FROM trades tr JOIN tokens t ON t.mint = tr.token_mint JOIN stocks s ON s.mint = t.quote_mint
     WHERE tr.wallet = ${wallet} ORDER BY tr.block_time DESC LIMIT ${limit}`,
   // Everything we can price among a wallet's mints: stocks and memes, in one round trip.
-  known: (sql: Sql, mints: string[]) => sql<{ mint: string; kind: "stock" | "meme"; symbol: string | null; name: string | null; image: string | null; decimals: number; price_usd: number | null; change_24h: number | null; quote_symbol: string | null }[]>`
-    SELECT s.mint, 'stock' AS kind, s.symbol, s.name, s.logo AS image, s.decimals, s.price_usd, s.change_24h, NULL AS quote_symbol
+  known: (sql: Sql, mints: string[]) => sql<{ mint: string; kind: "stock" | "meme"; symbol: string | null; name: string | null; image: string | null; decimals: number; price_usd: number | null; change_24h: number | null; quote_symbol: string | null; multiplier: number }[]>`
+    SELECT s.mint, 'stock' AS kind, s.symbol, s.name, s.logo AS image, s.decimals, s.price_usd, s.change_24h, NULL AS quote_symbol, s.multiplier
     FROM stocks s WHERE s.mint IN ${sql(mints)}
     UNION ALL
-    SELECT t.mint, 'meme', t.symbol, t.name, t.image, t.decimals, st.price_usd, st.change_24h, q.symbol
+    SELECT t.mint, 'meme', t.symbol, t.name, t.image, t.decimals, st.price_usd, st.change_24h, q.symbol, 1
     FROM tokens t LEFT JOIN token_stats st ON st.token_mint = t.mint JOIN stocks q ON q.mint = t.quote_mint WHERE t.mint IN ${sql(mints)}`,
 };

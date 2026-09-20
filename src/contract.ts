@@ -34,6 +34,10 @@ export const Stock = z.object({
   mint: Mint, symbol: z.string(), name: z.string(), issuer: z.string(), category: z.string(),
   logo: z.string().nullable(), priceUsd: z.number().nullable(), change24h: z.number().nullable(),
   memes: z.number().int(), marketOpen: z.boolean(),
+  // Token-2022 scaled-UI multiplier: xStocks pay dividends / do splits by raising it. 1 raw unit = `multiplier` displayed
+  // units. priceUsd is per displayed unit (what wallets show). priceQuote, candles and trade `quote` are in raw units,
+  // so USD = value × quoteUsd, where quoteUsd = priceUsd × multiplier.
+  multiplier: z.number(), quoteUsd: z.number().nullable(),
   // the stock itself (Jupiter price, DexScreener depth/volume; PreStocks mark or the real underlying price)
   markUsd: z.number().nullable(), premiumPct: z.number().nullable(), liquidityUsd: z.number().nullable(),
   stockVol24hUsd: z.number().nullable(), buys24h: z.number().int().nullable(), sells24h: z.number().int().nullable(),
@@ -92,7 +96,7 @@ export type TokenCard = z.infer<typeof TokenCard>;
 export const TokenHeader = TokenCard.extend({
   creator: z.string().nullable(), decimals: z.number().int(), supply: z.string().nullable(),
   curvePool: z.string().nullable(), ammPool: z.string().nullable(), uri: z.string().nullable(),
-  stock: Stock.pick({ mint: true, symbol: true, name: true, priceUsd: true, change24h: true, marketOpen: true }),
+  stock: Stock.pick({ mint: true, symbol: true, name: true, priceUsd: true, change24h: true, marketOpen: true, multiplier: true, quoteUsd: true }),
 });
 export type TokenHeader = z.infer<typeof TokenHeader>;
 

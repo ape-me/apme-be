@@ -21,6 +21,7 @@ export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
   tags: tagsFor(r),
   mint: r.mint, symbol: r.symbol, name: r.name, issuer: r.issuer, category: r.category, logo: r.logo,
   priceUsd: num(r.price_usd), change24h: num(r.change_24h), memes: int(r.memes ?? 0), marketOpen: open,
+  multiplier: Number(r.multiplier ?? 1), quoteUsd: r.price_usd == null ? null : Number(r.price_usd) * Number(r.multiplier ?? 1),
   markUsd: r.mark_usd == null ? null : Math.round(r.mark_usd * 100) / 100, premiumPct: r.premium_pct == null ? null : Math.round(r.premium_pct * 100) / 100, liquidityUsd: r.liquidity_usd == null ? null : Math.round(r.liquidity_usd),
   stockVol24hUsd: r.vol_24h_usd == null ? null : Math.round(r.vol_24h_usd), buys24h: r.buys_24h == null ? null : int(r.buys_24h), sells24h: r.sells_24h == null ? null : int(r.sells_24h),
   heat: Math.round(int(r.heat)), launched24h: int(r.launched_24h), memeVol24hUsd: Math.round(int(r.meme_vol_24h)), wallets24h: int(r.wallets_24h),
@@ -42,7 +43,8 @@ export const shapeToken = (r: TokenRow): TokenCard => ({
 
 export const shapeHeader = (r: TokenRow, s: StockRow): TokenHeader => ({
   ...shapeToken(r), creator: r.creator, decimals: r.decimals, supply: r.supply, curvePool: r.curve_pool, ammPool: r.amm_pool, uri: r.uri,
-  stock: { mint: s.mint, symbol: s.symbol, name: s.name, priceUsd: num(s.price_usd), change24h: num(s.change_24h), marketOpen: marketOpen() },
+  stock: { mint: s.mint, symbol: s.symbol, name: s.name, priceUsd: num(s.price_usd), change24h: num(s.change_24h), marketOpen: marketOpen(),
+           multiplier: Number(s.multiplier ?? 1), quoteUsd: s.price_usd == null ? null : Number(s.price_usd) * Number(s.multiplier ?? 1) },
 });
 
 export const shapeTrade = (r: TradeRow, baseDec: number, quoteDec: number, stockUsd: number | null): Trade => {
