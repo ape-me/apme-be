@@ -25,7 +25,8 @@ export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
   markUsd: r.mark_usd == null ? null : Math.round(r.mark_usd * 100) / 100, premiumPct: r.premium_pct == null ? null : Math.round(r.premium_pct * 100) / 100, liquidityUsd: r.liquidity_usd == null ? null : Math.round(r.liquidity_usd),
   stockVol24hUsd: r.vol_24h_usd == null ? null : Math.round(r.vol_24h_usd), buys24h: r.buys_24h == null ? null : int(r.buys_24h), sells24h: r.sells_24h == null ? null : int(r.sells_24h),
   heat: Math.round(int(r.heat)), launched24h: int(r.launched_24h), memeVol24hUsd: Math.round(int(r.meme_vol_24h)), wallets24h: int(r.wallets_24h),
-  king: r.king_mint ? { mint: r.king_mint, symbol: r.king_symbol, image: r.king_image, vol24hUsd: Math.round(int(r.king_vol)) } : null,
+  king: r.king_mint ? { mint: r.king_mint, symbol: r.king_symbol, image: r.king_image, vol24hUsd: Math.round(int(r.king_vol)),
+    priceUsd: num(r.king_price), mcapUsd: num(r.king_mcap), change24h: num(r.king_change), phase: r.king_phase ?? "curve", progressPct: num(r.king_progress), launchpad: r.king_launchpad ?? "stonkfun" } : null,
 });
 
 export const shapeToken = (r: TokenRow): TokenCard => ({

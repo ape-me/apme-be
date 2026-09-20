@@ -11,6 +11,8 @@ import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
 import { COLLECTION_IDS } from "../services/collections";
 
+const MintList = z.array(Mint).min(1).max(50);
+
 const parse = <T>(schema: z.ZodType<T>, v: unknown): T => {
   const r = schema.safeParse(v);
   if (!r.success) throw badRequest(r.error.issues.map((i) => `${i.path.join(".") || "value"}: ${i.message}`).join("; "));
@@ -27,7 +29,8 @@ read.get("/ticker", (c) => cached(c.req.raw, 3, async () => {
 
 read.get("/stocks", (c) => cached(c.req.raw, 5, async () => {
   // ?issuer=prestocks  or  ?issuer=xstocks,backpack
-  const q = parse(z.object({ issuer: z.string().optional(), collection: z.enum(COLLECTION_IDS as [string, ...string[]]).optional() }), c.req.query());
+  const q = parse(z.object({ issuer: z.string().optional(), collection: z.enum(COLLECTION_IDS as [string, ...string[]]).optional(), mints: z.string().optional() }), c.req.query());
+  if (q.mints) return c.json(await catalog.stocksByMints(c.get("sql"), parse(MintList, q.mints.split(","))));   // ?mints=a,b,c: watchlist lookup
   const issuers = q.issuer ? parse(z.array(Issuer), q.issuer.split(",")) : undefined;
   return c.json(await catalog.stocks(c.get("sql"), issuers, q.collection));
 }));
@@ -62,6 +65,8 @@ read.get("/stocks/:mint/tokens", (c) => cached(c.req.raw, 3, async () => {
 }));
 
 read.get("/tokens", (c) => cached(c.req.raw, 3, async () => {
+  const mints = c.req.query("mints");
+  if (mints) return c.json(await catalog.tokensByMints(c.get("sql"), parse(MintList, mints.split(","))));
   const { column, sort, limit, cursor, ...filters } = parse(ListQuery.extend({ stock: Mint.optional() }), c.req.query());
   const { stock, ...rest } = filters as typeof filters & { stock?: string };
   return c.json(await catalog.list(c.get("sql"), { stock, column, sort, limit, cursor, filters: rest }));

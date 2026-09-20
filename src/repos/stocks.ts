@@ -7,6 +7,7 @@ export type StockRow = {
   vol_24h_usd: number | null; buys_24h: number | null; sells_24h: number | null;
   heat: number; launched_24h: number; meme_vol_24h: number; wallets_24h: number;
   king_mint: string | null; king_symbol: string | null; king_image: string | null; king_vol: number | null;
+  king_price: number | null; king_mcap: number | null; king_change: number | null; king_phase: "curve" | "graduated" | null; king_progress: number | null; king_launchpad: string | null;
 };
 
 // One row per stock with its own market data plus what its floor did in the last 24h.
@@ -19,7 +20,8 @@ const select = (sql: Sql, where: ReturnType<Sql>) => sql<StockRow[]>`
          (SELECT count(*)::int FROM tokens k WHERE k.quote_mint = s.mint) AS memes,
          coalesce(ss.launched_24h, 0) AS launched_24h, coalesce(ss.meme_vol_24h, 0) AS meme_vol_24h,
          coalesce(ss.wallets_24h, 0) AS wallets_24h, coalesce(ss.heat, 0) AS heat,
-         ss.king_mint, kg.symbol AS king_symbol, kg.image AS king_image, kst.vol_24h_usd AS king_vol
+         ss.king_mint, kg.symbol AS king_symbol, kg.image AS king_image, kst.vol_24h_usd AS king_vol,
+         kst.price_usd AS king_price, kst.mcap_usd AS king_mcap, kst.change_24h AS king_change, kg.phase AS king_phase, kst.progress_pct AS king_progress, kg.launchpad AS king_launchpad
   FROM stocks s
   LEFT JOIN stock_stats ss ON ss.mint = s.mint
   LEFT JOIN tokens kg ON kg.mint = ss.king_mint
@@ -30,4 +32,5 @@ const select = (sql: Sql, where: ReturnType<Sql>) => sql<StockRow[]>`
 export const stocksRepo = {
   all: (sql: Sql) => select(sql, sql``),
   byMint: async (sql: Sql, mint: string) => (await select(sql, sql`AND s.mint = ${mint}`))[0] ?? null,
+  byMints: (sql: Sql, mints: string[]) => select(sql, sql`AND s.mint IN ${sql(mints)}`),
 };

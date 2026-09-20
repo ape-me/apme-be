@@ -59,6 +59,16 @@ export const catalog = {
       mostTraded: by((r) => r.vol_24h_usd ?? 0), asOf: Math.floor(Date.now() / 1000),
     };
   },
+  // Watchlists live on the phone; these return the same shapes for a handful of mints, in request order.
+  stocksByMints: async (sql: Sql, mints: string[]): Promise<z.infer<typeof StocksResponse>> => {
+    const open = marketOpen();
+    const by = new Map((await stocksRepo.byMints(sql, mints)).map((r) => [r.mint, r]));
+    return { stocks: mints.map((m) => by.get(m)).filter((r): r is NonNullable<typeof r> => !!r).map((r) => shapeStock(r, open)), asOf: Math.floor(Date.now() / 1000) };
+  },
+  tokensByMints: async (sql: Sql, mints: string[]): Promise<z.infer<typeof TokensResponse>> => {
+    const by = new Map((await tokensRepo.byMints(sql, mints)).map((r) => [r.mint, r]));
+    return { tokens: mints.map((m) => by.get(m)).filter((r): r is NonNullable<typeof r> => !!r).map(shapeToken), next: null };
+  },
   stock: async (sql: Sql, mint: string) => {
     const row = await stocksRepo.byMint(sql, mint);
     if (!row) throw notFound("stock");

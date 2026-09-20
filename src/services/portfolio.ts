@@ -5,6 +5,8 @@ import { balances, solPrice, SOL_MINT } from "../lib/rpc";
 import type { WalletResponse } from "../contract";
 import type { z } from "zod";
 
+const SOL_LOGO = "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png";
+
 const round = (v: number | null | undefined, d = 2) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
 
 // One screen: what the wallet holds (chain), what it paid (our tape), what it's worth (current prices).
@@ -19,7 +21,7 @@ export async function wallet(env: Env, sql: Sql, address: string, activityLimit:
 
   const holdings: z.infer<typeof WalletResponse>["holdings"] = [];
   const solUsd = solUsdPrice == null ? 0 : sol * solUsdPrice;
-  if (sol > 0) holdings.push({ mint: SOL_MINT, kind: "sol", symbol: "SOL", name: "Solana", image: null, quoteSymbol: null, amount: sol, priceUsd: round(solUsdPrice), valueUsd: round(solUsd), change24h: null, costUsd: null, pnlUsd: null, pnlPct: null });
+  if (sol > 0) holdings.push({ mint: SOL_MINT, kind: "sol", symbol: "SOL", name: "Solana", image: SOL_LOGO, quoteSymbol: null, amount: sol, priceUsd: round(solUsdPrice), valueUsd: round(solUsd), change24h: null, costUsd: null, pnlUsd: null, pnlPct: null });
 
   let stocksUsd = 0, memesUsd = 0, costUsd = 0, pnlUsd = 0, realizedUsd = 0;
   for (const t of tokens) {

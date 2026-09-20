@@ -27,7 +27,12 @@ export type TokenFilters = z.infer<typeof TokenFilters>;
 export const Limit = z.coerce.number().int().min(1).max(500);
 export const Cursor = z.string().max(200).optional();
 
-export const King = z.object({ mint: Mint, symbol: z.string().nullable(), image: z.string().nullable(), vol24hUsd: z.number() });
+// Top meme on a floor by 24h volume. Carries enough to draw its card without a second request.
+export const King = z.object({
+  mint: Mint, symbol: z.string().nullable(), image: z.string().nullable(), vol24hUsd: z.number(),
+  priceUsd: z.number().nullable(), mcapUsd: z.number().nullable(), change24h: z.number().nullable(),
+  phase: z.enum(["curve", "graduated"]), progressPct: z.number().nullable(), launchpad: z.string(),
+});
 export type King = z.infer<typeof King>;
 
 export const Stock = z.object({

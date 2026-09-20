@@ -93,6 +93,8 @@ export const tokensRepo = {
       WHERE t.name IS DISTINCT FROM '' ${stock} ${columnWhere(sql, a.column, now)} ${filterWhere(sql, a.filters, now)} ${after}
       ORDER BY ${order} DESC, t.mint DESC LIMIT ${a.limit}`;
   },
+  byMints: (sql: Sql, mints: string[]) => sql<TokenRow[]>`
+    SELECT ${cols(sql)} FROM tokens t LEFT JOIN token_stats st ON st.token_mint = t.mint WHERE t.mint IN ${sql(mints)}`,
   byMint: async (sql: Sql, mint: string) => (await sql<TokenRow[]>`
     SELECT ${cols(sql)} FROM tokens t LEFT JOIN token_stats st ON st.token_mint = t.mint WHERE t.mint = ${mint}`)[0] ?? null,
   // Token joined with its quote stock: one round trip for the token page header and the trades tape.
