@@ -20,7 +20,8 @@ const parse = <T>(schema: z.ZodType<T>, v: unknown): T => {
 // Every /v1/me and trade route: verify the Privy identity token, load (or create) the user.
 export const requireAuth: MiddlewareHandler<{ Bindings: Env; Variables: AuthVars }> = async (c, next) => {
   if (!c.env.PRIVY_APP_ID) throw new HttpError(503, "auth_not_configured");
-  const token = c.req.header("privy-id-token") ?? c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  // Identity token preferred (carries the wallets); Privy access token accepted as a fallback (same signer, no wallets).
+  const token = c.req.header("privy-id-token")?.trim() || c.req.header("authorization")?.replace(/^Bearer\s+/i, "").trim();
   if (!token) throw unauthorized();
   const privy = await verifyIdToken(c.env, token);
   const { user, wallets, settings } = await ensureUser(c.get("sql"), privy, Number(c.env.INVITES_PER_USER ?? 5));

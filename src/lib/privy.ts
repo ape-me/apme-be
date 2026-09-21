@@ -34,10 +34,10 @@ export async function verifyIdToken(env: Env, token: string): Promise<PrivyUser>
   if (!jwk) throw unauthorized();
   const key = await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
   const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, b64u(sig), new TextEncoder().encode(`${h}.${body}`));
-  if (!ok) throw unauthorized();
+  if (!ok) { console.warn("privy: bad signature", { kid: header.kid, keys: keys.map((k) => k.kid) }); throw unauthorized(); }
   const p = JSON.parse(dec.decode(b64u(body))) as { iss: string; aud: string | string[]; sub: string; exp: number; linked_accounts?: string };
   const aud = Array.isArray(p.aud) ? p.aud : [p.aud];
-  if (p.iss !== "privy.io" || !aud.includes(env.PRIVY_APP_ID) || p.exp * 1000 < Date.now()) throw unauthorized();
+  if (p.iss !== "privy.io" || !aud.includes(env.PRIVY_APP_ID) || p.exp * 1000 < Date.now()) { console.warn("privy: claims", { iss: p.iss, aud, exp: p.exp }); throw unauthorized(); }
   const linked = p.linked_accounts ? (JSON.parse(p.linked_accounts) as { type: string; address?: string; chain_type?: string; wallet_client_type?: string }[]) : [];
   const wallets = linked
     .filter((a) => a.type === "wallet" && a.address && (a.chain_type === "solana" || a.chain_type === "ethereum"))
