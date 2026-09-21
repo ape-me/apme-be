@@ -4,7 +4,8 @@ export type Env = {
   DATABASE_URL?: string;      // dev fallback when no Hyperdrive binding
   INGEST_SECRET: string;
   METRICS_TOKEN?: string;     // bearer for /metrics (Prometheus on the ops box)
-  RPC_URL: string;            // Solana JSON-RPC for wallet balances (secret)
+  RPC_URL: string;
+  ADMIN_TOKEN?: string;       // bearer for /v1/admin (stock overrides)            // Solana JSON-RPC for wallet balances (secret)
   ROOMS: DurableObjectNamespace;
   RL_READ?: { limit(o: { key: string }): Promise<{ success: boolean }> };
   RL_APELIST?: { limit(o: { key: string }): Promise<{ success: boolean }> };

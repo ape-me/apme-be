@@ -7,6 +7,7 @@ import { marketRepo } from "./repos/market";
 import { read } from "./routes/read";
 import { ingest } from "./routes/ingest";
 import { ws } from "./routes/ws";
+import { admin } from "./routes/admin";
 import { apelistRoute } from "./routes/apelist";
 
 export { Room } from "./do/room";
@@ -57,6 +58,7 @@ app.route("/api/apelist", apelistRoute);
 app.route("/v1", read);
 app.route("/api", read);   // alias, same handlers
 app.route("/ingest", ingest);
+app.route("/v1/admin", admin);
 app.route("/ws", ws);
 
 app.notFound((c) => c.json({ error: "not found", requestId: c.req.header("cf-ray") ?? "" }, 404));
