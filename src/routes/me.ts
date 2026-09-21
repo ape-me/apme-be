@@ -5,7 +5,7 @@ import { withDb, type DbVars } from "../lib/db";
 import { HttpError, badRequest, notFound, unauthorized } from "../lib/errors";
 import { verifyIdToken, type PrivyUser } from "../lib/privy";
 import { Mint } from "../contract";
-import { ensureUser, redeemInvite, referrals, updateProfile, updateSettings, shapeSettings, shapeWallet, type UserRow, type WalletRow, type SettingsRow } from "../services/account";
+import { ensureUser, redeemInvite, referrals, claimReferrals, updateProfile, updateSettings, shapeSettings, shapeWallet, type UserRow, type WalletRow, type SettingsRow } from "../services/account";
 import { accountRepo } from "../repos/account";
 import { catalog } from "../services/catalog";
 
@@ -65,6 +65,7 @@ me.post("/invite", async (c) => {
 });
 
 me.get("/referrals", async (c) => c.json(await referrals(c.get("sql"), c.get("user"))));
+me.post("/referrals/claim", async (c) => c.json(await claimReferrals(c.env, c.get("sql"), c.get("user"), c.get("wallets"))));
 
 me.get("/settings", (c) => c.json(shapeSettings(c.get("settings"))));
 const Settings = z.object({

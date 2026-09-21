@@ -50,6 +50,10 @@ export const accountRepo = {
   earnings: (sql: Sql, referrerId: string) => sql<{ earned: number | null; claimable: number | null }[]>`
     SELECT SUM(amount_usd) AS earned, SUM(amount_usd) FILTER (WHERE status = 'accrued') AS claimable FROM referral_earnings WHERE referrer_user_id = ${referrerId}`,
 
+  accrued: (sql: Sql, referrerId: string) => sql<{ id: string; amount_usd: number }[]>`SELECT id, amount_usd FROM referral_earnings WHERE referrer_user_id = ${referrerId} AND status = 'accrued'`,
+  markPaid: (sql: Sql, ids: string[], sig: string, t: number) => sql`UPDATE referral_earnings SET status = 'paid', paid_signature = ${sig}, paid_at = ${t} WHERE id IN ${sql(ids)} AND status = 'accrued'`,
+  payouts: (sql: Sql, referrerId: string) => sql<{ paid_signature: string; amount: number; paid_at: number }[]>`
+    SELECT paid_signature, SUM(amount_usd) AS amount, MAX(paid_at) AS paid_at FROM referral_earnings WHERE referrer_user_id = ${referrerId} AND status = 'paid' GROUP BY paid_signature ORDER BY MAX(paid_at) DESC LIMIT 20`,
   watchlist: (sql: Sql, userId: string) => sql<{ mint: string }[]>`SELECT mint FROM watchlist WHERE user_id = ${userId} ORDER BY added_at DESC`,
   star: (sql: Sql, userId: string, mint: string, t: number) => sql`INSERT INTO watchlist (user_id, mint, added_at) VALUES (${userId}, ${mint}, ${t}) ON CONFLICT DO NOTHING`,
   unstar: (sql: Sql, userId: string, mint: string) => sql`DELETE FROM watchlist WHERE user_id = ${userId} AND mint = ${mint}`,

@@ -3,6 +3,9 @@ import type { PrivyUser } from "../lib/privy";
 import { HttpError, badRequest, notFound } from "../lib/errors";
 import { pgArr } from "./collections";
 import { accountRepo, type UserRow, type WalletRow, type SettingsRow } from "../repos/account";
+import type { Env } from "../env";
+import { PublicKey } from "@solana/web3.js";
+import { USDC_MINT, TOKEN_PROGRAM, connection, gasKeypair, ata, transferChecked, createAtaIdempotent, buildV0 } from "../lib/solana";
 export type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -78,7 +81,33 @@ export async function referrals(sql: Sql, user: UserRow) {
     invitesLeft: code ? Math.max(0, code.max_uses - code.uses) : 0,
     referred: referred.map((r) => ({ userId: r.id, handle: r.handle, joinedAt: Number(r.joined_at), volumeUsd: r.volume_usd == null ? 0 : Number(r.volume_usd) })),
     earnedUsd: Number(earn?.earned ?? 0), claimableUsd: Number(earn?.claimable ?? 0),
+    payouts: (await accountRepo.payouts(sql, user.id)).map((p) => ({ signature: p.paid_signature, amountUsd: Number(p.amount), paidAt: Number(p.paid_at) })),
   };
+}
+
+const MIN_CLAIM_USD = 1;
+
+// Pays every accrued row in one USDC transfer from the gas wallet (which also holds the payout float) to the user's
+// default wallet. Rows are marked paid with the signature only after the send succeeds.
+export async function claimReferrals(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[]) {
+  const rows = await accountRepo.accrued(sql, user.id);
+  const total = rows.reduce((a, r) => a + Number(r.amount_usd), 0);
+  if (total < MIN_CLAIM_USD) throw new HttpError(422, `claimable $${total.toFixed(2)} is under the $${MIN_CLAIM_USD} minimum`);
+  const dest = wallets.find((w) => w.is_default && w.chain === "solana") ?? wallets.find((w) => w.chain === "solana");
+  if (!dest) throw badRequest("no solana wallet to pay to");
+  const gas = gasKeypair(env); const conn = connection(env);
+  const usdc = new PublicKey(USDC_MINT), to = new PublicKey(dest.address);
+  const raw = BigInt(Math.floor(total * 1e6));
+  const { tx } = await buildV0(conn, gas.publicKey, [
+    createAtaIdempotent(gas.publicKey, to, usdc, TOKEN_PROGRAM),
+    transferChecked(ata(gas.publicKey, usdc), usdc, ata(to, usdc), gas.publicKey, raw, 6, TOKEN_PROGRAM),
+  ], []);
+  tx.sign([gas]);
+  let sig: string;
+  try { sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 }); }
+  catch (e) { throw new HttpError(503, /insufficient|0x1\b/i.test((e as Error).message) ? "payout wallet is being topped up, try again later" : `payout failed: ${(e as Error).message.slice(0, 120)}`); }
+  await accountRepo.markPaid(sql, rows.map((r) => r.id), sig, now());
+  return { signature: sig, amountUsd: Math.round(total * 100) / 100, to: dest.address };
 }
 
 export async function updateSettings(sql: Sql, userId: string, cur: SettingsRow, b: { slippageBps?: number; quickBuyUsd?: number[]; quickSellPct?: number[]; priority?: string; confirmBeforeTrade?: boolean; hideDust?: boolean }): Promise<SettingsRow> {
