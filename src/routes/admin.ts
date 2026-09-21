@@ -7,6 +7,7 @@ import { Mint } from "../contract";
 import { COLLECTION_IDS, pgArr } from "../services/collections";
 import { mintAdminCodes } from "../services/account";
 import { accountRepo } from "../repos/account";
+import { gasInfo, simulate } from "../services/swap";
 
 // Operator overrides for the stock list. Writes stock_config (the indexer re-reads it every 10 min and
 // resubscribes) and mirrors excluded/category/tags onto stocks so the API reflects the change at once.
@@ -53,4 +54,11 @@ admin.post("/invites", async (c) => {
   if (!b.success) throw badRequest(b.error.issues.map((i) => i.message).join("; "));
   const codes = await mintAdminCodes(c.get("sql"), b.data.count, b.data.maxUses, b.data.label ?? null, b.data.expiresAt ?? null);
   return c.json({ codes, maxUses: b.data.maxUses, label: b.data.label ?? null });
+});
+
+admin.get("/gas", async (c) => c.json(await gasInfo(c.env)));
+admin.post("/swap-simulate", async (c) => {
+  const b = z.object({ inputMint: z.string(), outputMint: z.string(), amount: z.string().regex(/^\d+$/), taker: Mint }).safeParse(await c.req.json());
+  if (!b.success) throw badRequest(b.error.issues.map((i) => i.message).join("; "));
+  return c.json(await simulate(c.env, c.get("sql"), b.data));
 });

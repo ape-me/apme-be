@@ -32,16 +32,16 @@ type JupIxs = { computeBudgetInstructions: JupIx[]; setupInstructions: JupIx[]; 
 
 export type QuoteInput = { inputMint: string; outputMint: string; amount: string; taker: string; slippageBps?: number; priority?: "normal" | "fast" | "turbo" };
 
-export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], settings: SettingsRow, q: QuoteInput) {
+// Builds the full transaction for a quote without recording anything. Shared by the real quote and the admin simulator.
+export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { slippageBps: number; priority: string }) {
   const inputMint = resolveMint(q.inputMint), outputMint = resolveMint(q.outputMint);
   if (inputMint === outputMint) throw badRequest("inputMint and outputMint are the same");
   const side = inputMint === USDC_MINT ? "buy" : outputMint === USDC_MINT ? "sell" : null;
   if (!side) throw new HttpError(422, "usdc_only");
-  if (!wallets.some((w) => w.address === q.taker && w.chain === "solana")) throw new HttpError(403, "taker is not one of your wallets");
   const amount = BigInt(q.amount);
   if (amount <= 0n) throw badRequest("amount must be > 0");
-  const slippageBps = q.slippageBps ?? settings.slippage_bps;
-  let priority = q.priority ?? (settings.priority as keyof typeof PRIORITY);
+  const slippageBps = q.slippageBps ?? defaults.slippageBps;
+  let priority = (q.priority ?? defaults.priority) as keyof typeof PRIORITY;
 
   const tokenMint = side === "buy" ? outputMint : inputMint;
   const [stock] = await swapsRepo.stockMeta(sql, tokenMint);
@@ -98,9 +98,15 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
   const msgBytes = tx.message.serialize();
   const msgHash = await sha256hex(msgBytes);
   const gasLamports = (ixs.prioritizationFeeLamports ?? 0) + 5000 * 2;
-
-  const id = crypto.randomUUID(); const t = now();
   const premiumPct = stock?.premium_pct == null ? null : Number(stock.premium_pct);
+  return { tx, msgHash, lastValidBlockHeight, gasLamports, rentLamports, rentMints, side, inputMint, outputMint, symbol, amount, jqj, minOut, feeRaw, inUsd, outUsd, slippageBps, priority, premiumPct, stock, gasPubkey: gas.publicKey.toBase58() };
+}
+
+export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], settings: SettingsRow, q: QuoteInput) {
+  if (!wallets.some((w) => w.address === q.taker && w.chain === "solana")) throw new HttpError(403, "taker is not one of your wallets");
+  const b = await buildTx(env, sql, q, { slippageBps: settings.slippage_bps, priority: settings.priority });
+  const { tx, msgHash, lastValidBlockHeight, gasLamports, rentLamports, rentMints, side, inputMint, outputMint, symbol, amount, jqj, minOut, feeRaw, inUsd, outUsd, slippageBps, priority, premiumPct, stock } = b;
+  const id = crypto.randomUUID(); const t = now();
   await swapsRepo.insertQuote(sql, {
     id, userId: user.id, wallet: q.taker, side, inputMint, outputMint, symbol, inRaw: amount.toString(), outRaw: jqj.outAmount, minOutRaw: minOut.toString(),
     inUsd, outUsd, feeBps: FEE_BPS, feeRaw: feeRaw.toString(), feeUsd: Number(feeRaw) / 1e6, priceImpactPct: Number(jqj.priceImpactPct) * 100, premiumPct,
@@ -114,7 +120,7 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
     gas: { paidBy: "apeme", priority, lamports: gasLamports, rentLamports },
     premiumPct, markUsd: stock?.mark_usd == null ? null : Number(stock.mark_usd),
     transaction: Buffer.from(tx.serialize()).toString("base64"),
-    signers: { feePayer: gas.publicKey.toBase58(), user: q.taker },
+    signers: { feePayer: b.gasPubkey, user: q.taker },
     expiresAt: t + QUOTE_TTL_S,
     _rentMints: rentMints,
   };
@@ -183,4 +189,23 @@ export async function txStatus(env: Env, sql: Sql, signature: string) {
     }
   }
   return { signature, status: "confirmed" as const, slot: st.slot, confirmations: st.confirmationStatus };
+}
+
+// Ops: our gas wallet as the chain sees it. Address is derived from the secret; the secret itself never leaves memory.
+export async function gasInfo(env: Env) {
+  const gas = gasKeypair(env); const conn = connection(env);
+  const lamports = await conn.getBalance(gas.publicKey, "confirmed");
+  return { address: gas.publicKey.toBase58(), sol: lamports / 1e9, feeWallet: env.FEE_WALLET ?? null };
+}
+
+// Ops: build a real swap tx for any funded wallet and simulate it (no signatures, no money). Proves the whole path.
+export async function simulate(env: Env, sql: Sql, q: QuoteInput) {
+  const b = await buildTx(env, sql, q, { slippageBps: 100, priority: "normal" });
+  const conn = connection(env);
+  const sim = await conn.simulateTransaction(b.tx, { sigVerify: false, replaceRecentBlockhash: true, commitment: "confirmed" });
+  return {
+    ok: !sim.value.err, err: sim.value.err, unitsConsumed: sim.value.unitsConsumed, logs: (sim.value.logs ?? []).slice(-12),
+    side: b.side, symbol: b.symbol, inAmount: b.amount.toString(), outAmount: b.jqj.outAmount, feeRaw: b.feeRaw.toString(), inUsd: b.inUsd, outUsd: b.outUsd,
+    gasLamports: b.gasLamports, rentLamports: b.rentLamports, feePayer: b.gasPubkey, txBytes: b.tx.serialize().length,
+  };
 }
