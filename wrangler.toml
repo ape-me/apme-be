@@ -15,6 +15,7 @@ PUBLIC_URL = "https://apme-be.iamjoey.workers.dev"
 PRIVY_APP_ID = "cmubdpllu01d00cl2p2q2n6h6"
 INVITE_GATE = "1"
 INVITES_PER_USER = "5"
+FEE_WALLET = "B582SQHFyRbREhoG4hzRvGFiB2WktnJMFYRHW9Q1BeCb"
 
 # Hyperdrive to the VPS Postgres (read-only user). Created with:
 #   wrangler hyperdrive create apme-pg --connection-string="postgres://apeme_ro:...@<tunnel-host>:5432/apeme"

@@ -8,7 +8,10 @@ export type Env = {
   ADMIN_TOKEN?: string;
   PRIVY_APP_ID?: string;      // Privy app; identity tokens verified against its JWKS
   INVITE_GATE?: string;       // "0" opens trading to everyone; default gated
-  INVITES_PER_USER?: string;  // personal invite code uses, default 5       // bearer for /v1/admin (stock overrides)            // Solana JSON-RPC for wallet balances (secret)
+  INVITES_PER_USER?: string;  // personal invite code uses, default 5
+  GAS_WALLET_SECRET?: string; // base58 keypair of our fee payer (secret)
+  FEE_WALLET?: string;        // pubkey that receives the 1% (USDC)
+  JUP_API_KEY?: string;       // developers.jup.ag key; falls back to lite-api without it       // bearer for /v1/admin (stock overrides)            // Solana JSON-RPC for wallet balances (secret)
   ROOMS: DurableObjectNamespace;
   RL_READ?: { limit(o: { key: string }): Promise<{ success: boolean }> };
   RL_APELIST?: { limit(o: { key: string }): Promise<{ success: boolean }> };

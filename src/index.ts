@@ -9,6 +9,7 @@ import { ingest } from "./routes/ingest";
 import { ws } from "./routes/ws";
 import { admin } from "./routes/admin";
 import { me } from "./routes/me";
+import { swap, tx } from "./routes/swap";
 import { apelistRoute } from "./routes/apelist";
 
 export { Room } from "./do/room";
@@ -61,6 +62,8 @@ app.route("/api", read);   // alias, same handlers
 app.route("/ingest", ingest);
 app.route("/v1/admin", admin);
 app.route("/v1/me", me);
+app.route("/v1/swap", swap);
+app.route("/v1/tx", tx);
 app.route("/ws", ws);
 
 app.notFound((c) => c.json({ error: "not found", requestId: c.req.header("cf-ray") ?? "" }, 404));
