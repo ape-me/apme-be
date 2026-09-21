@@ -20,7 +20,7 @@ export function marketOpen(now = new Date()): boolean {
 export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
   tags: tagsFor(r),
   mint: r.mint, symbol: r.symbol, name: r.name, issuer: r.issuer, category: r.category, logo: r.logo,
-  priceUsd: num(r.price_usd), change24h: num(r.change_24h), memes: int(r.memes ?? 0), marketOpen: open,
+  priceUsd: num(r.price_usd), change24h: num(r.change_24h), memes: int(r.memes ?? 0), marketOpen: open, decimals: int(r.decimals),
   multiplier: Number(r.multiplier ?? 1), quoteUsd: r.price_usd == null ? null : Number(r.price_usd) * Number(r.multiplier ?? 1),
   markUsd: r.mark_usd == null ? null : Math.round(r.mark_usd * 100) / 100, premiumPct: r.premium_pct == null ? null : Math.round(r.premium_pct * 100) / 100, liquidityUsd: r.liquidity_usd == null ? null : Math.round(r.liquidity_usd),
   stockVol24hUsd: r.vol_24h_usd == null ? null : Math.round(r.vol_24h_usd), buys24h: r.buys_24h == null ? null : int(r.buys_24h), sells24h: r.sells_24h == null ? null : int(r.sells_24h),

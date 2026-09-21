@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { withDb, type DbVars } from "../lib/db";
 import { HttpError, badRequest, notFound, unauthorized } from "../lib/errors";
-import { verifyIdToken, type PrivyUser } from "../lib/privy";
+import { verifyIdToken, fetchUserAccounts, type PrivyUser } from "../lib/privy";
 import { Mint } from "../contract";
 import { ensureUser, redeemInvite, referrals, claimReferrals, updateProfile, updateSettings, shapeSettings, shapeWallet, type UserRow, type WalletRow, type SettingsRow } from "../services/account";
 import { accountRepo } from "../repos/account";
@@ -24,6 +24,7 @@ export const requireAuth: MiddlewareHandler<{ Bindings: Env; Variables: AuthVars
   const token = c.req.header("privy-id-token")?.trim() || c.req.header("authorization")?.replace(/^Bearer\s+/i, "").trim();
   if (!token) throw unauthorized();
   const privy = await verifyIdToken(c.env, token);
+  if (!privy.wallets.length) { const acc = await fetchUserAccounts(c.env, privy.id); if (acc) { privy.wallets = acc.wallets; privy.email ??= acc.email; } }
   const { user, wallets, settings } = await ensureUser(c.get("sql"), privy, Number(c.env.INVITES_PER_USER ?? 5));
   c.set("privy", privy); c.set("user", user); c.set("wallets", wallets); c.set("settings", settings);
   await next();

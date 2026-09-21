@@ -99,7 +99,8 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
   const msgHash = await sha256hex(msgBytes);
   const gasLamports = (ixs.prioritizationFeeLamports ?? 0) + 5000 * 2;
   const premiumPct = stock?.premium_pct == null ? null : Number(stock.premium_pct);
-  return { tx, msgHash, lastValidBlockHeight, gasLamports, rentLamports, rentMints, side, inputMint, outputMint, symbol, amount, jqj, minOut, feeRaw, inUsd, outUsd, slippageBps, priority, premiumPct, stock, gasPubkey: gas.publicKey.toBase58() };
+  const tokenDecimals = stock?.decimals ?? meme?.decimals ?? 6, multiplier = stock ? Number(stock.multiplier ?? 1) : 1;
+  return { tokenDecimals, multiplier, tx, msgHash, lastValidBlockHeight, gasLamports, rentLamports, rentMints, side, inputMint, outputMint, symbol, amount, jqj, minOut, feeRaw, inUsd, outUsd, slippageBps, priority, premiumPct, stock, gasPubkey: gas.publicKey.toBase58() };
 }
 
 export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], settings: SettingsRow, q: QuoteInput) {
@@ -115,6 +116,7 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
   return {
     requestId: id, side, inputMint, outputMint, symbol,
     inAmount: amount.toString(), outAmount: jqj.outAmount, minOut: minOut.toString(),
+    inDecimals: side === "buy" ? 6 : b.tokenDecimals, outDecimals: side === "buy" ? b.tokenDecimals : 6, multiplier: b.multiplier,
     inUsd, outUsd, priceImpactPct: Number(jqj.priceImpactPct) * 100, slippageBps,
     fee: { bps: FEE_BPS, amountRaw: feeRaw.toString(), mint: USDC_MINT, usd: Number(feeRaw) / 1e6 },
     gas: { paidBy: "apeme", priority, lamports: gasLamports, rentLamports },

@@ -45,3 +45,22 @@ export async function verifyIdToken(env: Env, token: string): Promise<PrivyUser>
   const email = linked.find((a) => a.type === "email")?.address ?? null;
   return { id: p.sub, email, wallets };
 }
+
+// Access tokens carry no wallets. With the app secret we can ask Privy for the user's linked accounts instead
+// (server-to-server, cached a minute per user). Used only when the identity token isn't available.
+const userCache = new Map<string, { at: number; wallets: PrivyUser["wallets"]; email: string | null }>();
+export async function fetchUserAccounts(env: Env, did: string): Promise<{ wallets: PrivyUser["wallets"]; email: string | null } | null> {
+  if (!env.PRIVY_APP_ID || !env.PRIVY_APP_SECRET) return null;
+  const hit = userCache.get(did);
+  if (hit && Date.now() - hit.at < 60_000) return hit;
+  const r = await fetch(`https://auth.privy.io/api/v1/users/${encodeURIComponent(did)}`, { headers: { authorization: `Basic ${btoa(`${env.PRIVY_APP_ID}:${env.PRIVY_APP_SECRET}`)}`, "privy-app-id": env.PRIVY_APP_ID } });
+  if (!r.ok) { console.warn("privy: users api", r.status); return null; }
+  const j = (await r.json()) as { linked_accounts?: { type: string; address?: string; chain_type?: string }[] };
+  const linked = j.linked_accounts ?? [];
+  const out = {
+    wallets: linked.filter((a) => a.type === "wallet" && a.address && (a.chain_type === "solana" || a.chain_type === "ethereum")).map((a) => ({ address: a.address!, chain: a.chain_type === "solana" ? ("solana" as const) : ("evm" as const) })),
+    email: linked.find((a) => a.type === "email")?.address ?? null,
+  };
+  userCache.set(did, { at: Date.now(), ...out });
+  return out;
+}

@@ -38,7 +38,7 @@ export type King = z.infer<typeof King>;
 export const Stock = z.object({
   mint: Mint, symbol: z.string(), name: z.string(), issuer: z.string(), category: z.string(),
   logo: z.string().nullable(), priceUsd: z.number().nullable(), change24h: z.number().nullable(),
-  memes: z.number().int(), marketOpen: z.boolean(),
+  memes: z.number().int(), marketOpen: z.boolean(), decimals: z.number().int(),
   // Token-2022 scaled-UI multiplier: xStocks pay dividends / do splits by raising it. 1 raw unit = `multiplier` displayed
   // units. priceUsd is per displayed unit (what wallets show). priceQuote, candles and trade `quote` are in raw units,
   // so USD = value × quoteUsd, where quoteUsd = priceUsd × multiplier.
