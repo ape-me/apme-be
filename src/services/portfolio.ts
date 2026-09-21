@@ -13,13 +13,12 @@ const USDC_LOGO = "https://raw.githubusercontent.com/solana-labs/token-list/main
 const round = (v: number | null | undefined, d = 2) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d);
 type Act = z.infer<typeof Activity>;
 
-// One screen: what the wallet holds (chain), what it paid (our swaps + the indexer's tape), what it's worth (current
-// prices), and what happened (our swaps with status, USDC deposits, meme trades).
+// Holdings from chain, cost basis from our swaps + indexed trades, activity from swaps + deposits + trades.
 export async function wallet(env: Env, sql: Sql, address: string, activityLimit: number): Promise<z.infer<typeof WalletResponse>> {
   const usdcAta = ata(new PublicKey(address), new PublicKey(USDC_MINT)).toBase58();
   const [{ sol, tokens }, solUsdPrice, tradePositions, tradeRows, swapPositions, swapRows, transfers] = await Promise.all([
     balances(env, address), solPrice(), walletRepo.positions(sql, address), walletRepo.activity(sql, address, activityLimit),
-    walletRepo.swapPositions(sql, address), walletRepo.swapActivity(sql, address, activityLimit), usdcTransfers(env, address, usdcAta).catch(() => []),
+    walletRepo.swapPositions(sql, address), walletRepo.swapActivity(sql, address, activityLimit), usdcTransfers(env, usdcAta).catch(() => []),
   ]);
   const mints = tokens.map((t) => t.mint).filter((m) => m !== USDC_MINT);
   const known = mints.length ? await walletRepo.known(sql, mints) : [];

@@ -1,17 +1,17 @@
 import type { Sql } from "../lib/db";
 
 // What our tape knows about one wallet on one token: what it paid in and took out, in USD at trade time.
-export type PositionRow = {
+type PositionRow = {
   token_mint: string; bought_raw: string; sold_raw: string; bought_usd: number; sold_usd: number; n: number; last_ts: number;
 };
-export type ActivityRow = {
+type ActivityRow = {
   signature: string; block_time: number; side: "buy" | "sell"; token_mint: string; symbol: string | null; image: string | null;
   base_raw: string; quote_raw: string; quote_usd: number | null; decimals: number; quote_mint: string; stock_symbol: string;
   quote_decimals: number; stock_price_usd: number | null;
 };
 
-export type SwapPositionRow = { mint: string; bought_raw: string; sold_raw: string; bought_usd: number; sold_usd: number };
-export type SwapActivityRow = {
+type SwapPositionRow = { mint: string; bought_raw: string; sold_raw: string; bought_usd: number; sold_usd: number };
+type SwapActivityRow = {
   id: string; signature: string | null; side: "buy" | "sell"; status: string; error: string | null; created_at: string; confirmed_at: string | null;
   input_mint: string; output_mint: string; in_raw: string; out_raw: string | null; in_usd: number | null; out_usd: number | null; fee_usd: number | null; symbol: string | null;
 };

@@ -9,8 +9,7 @@ import { mintAdminCodes } from "../services/account";
 import { accountRepo } from "../repos/account";
 import { gasInfo, simulate } from "../services/swap";
 
-// Operator overrides for the stock list. Writes stock_config (the indexer re-reads it every 10 min and
-// resubscribes) and mirrors excluded/category/tags onto stocks so the API reflects the change at once.
+// Operator overrides: write stock_config (indexer re-reads every 10 min) and mirror onto stocks immediately.
 const Patch = z.object({
   excluded: z.boolean().optional(),
   category: z.enum(["preipo", "stock", "etf", "crypto"]).nullable().optional(),

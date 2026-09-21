@@ -11,7 +11,7 @@ const call = async (env: Env, method: string, params: unknown[]) => {
   return j.result;
 };
 
-export type Balance = { mint: string; amount: number; raw: string; decimals: number };
+type Balance = { mint: string; amount: number; raw: string; decimals: number };
 
 // SOL plus every SPL / Token-2022 balance a wallet holds. Empty accounts are dropped.
 export async function balances(env: Env, owner: string): Promise<{ sol: number; tokens: Balance[] }> {
@@ -34,11 +34,10 @@ export async function solPrice(): Promise<number | null> {
 
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-export type Deposit = { sig: string; ts: number; amount: number; from: string | null; mint: string; direction: "in" | "out" };
+type Deposit = { sig: string; ts: number; amount: number; from: string | null; mint: string; direction: "in" | "out" };
 
-// Last few USDC transfers touching the wallet's USDC account, from the chain. One signatures call + one batched
-// getTransaction. Used for the "Received $20 USDC" rows; our own swaps are excluded by signature upstream.
-export async function usdcTransfers(env: Env, owner: string, usdcAta: string, limit = 8): Promise<Deposit[]> {
+// Last few USDC transfers on the wallet's USDC account: one signatures call + one batched getTransaction.
+export async function usdcTransfers(env: Env, usdcAta: string, limit = 8): Promise<Deposit[]> {
   const sigs = (await call(env, "getSignaturesForAddress", [usdcAta, { limit }])) as { signature: string; blockTime: number | null; err: unknown }[];
   const ok = sigs.filter((s) => !s.err);
   if (!ok.length) return [];

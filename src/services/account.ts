@@ -10,7 +10,7 @@ export type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 
 const now = () => Math.floor(Date.now() / 1000);
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
-export const newCode = (n = 6) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+const newCode = (n = 6) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
 const sha = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s.toLowerCase())))).map((b) => b.toString(16).padStart(2, "0")).join("");
 
 export const shapeSettings = (s: SettingsRow) => ({
@@ -19,8 +19,7 @@ export const shapeSettings = (s: SettingsRow) => ({
 });
 export const shapeWallet = (w: WalletRow) => ({ address: w.address, chain: w.chain as "solana" | "evm", hdIndex: w.hd_index, label: w.label, isDefault: w.is_default, createdAt: Number(w.created_at) });
 
-// First sight of a Privy user: create the user, settings and their wallets (as reported by the token). Every later
-// call just stamps last_seen and syncs any wallet Privy added since (multi-account).
+// Create user + settings + wallets on first sight; later calls stamp last_seen and sync new wallets.
 export async function ensureUser(sql: Sql, p: PrivyUser, invitesPerUser: number): Promise<{ user: UserRow; wallets: WalletRow[]; settings: SettingsRow }> {
   const t = now();
   const emailHash = p.email ? await sha(p.email) : null;
@@ -87,8 +86,7 @@ export async function referrals(sql: Sql, user: UserRow) {
 
 const MIN_CLAIM_USD = 1;
 
-// Pays every accrued row in one USDC transfer from the gas wallet (which also holds the payout float) to the user's
-// default wallet. Rows are marked paid with the signature only after the send succeeds.
+// Pay all accrued rows in one USDC transfer from the gas wallet; mark paid only after the send succeeds.
 export async function claimReferrals(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[]) {
   const rows = await accountRepo.accrued(sql, user.id);
   const total = rows.reduce((a, r) => a + Number(r.amount_usd), 0);

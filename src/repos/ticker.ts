@@ -1,6 +1,6 @@
 import type { Sql } from "../lib/db";
 
-export type TickerRow = { id: string; kind: "meme" | "stonk"; label: string; logo: string | null; change24h: number | null; price: number | null };
+type TickerRow = { id: string; kind: "meme" | "stonk"; label: string; logo: string | null; change24h: number | null; price: number | null };
 
 export const tickerRepo = {
   // Top stonks by meme count, top memes by 24h USD volume. Both carry live prices from the indexer.

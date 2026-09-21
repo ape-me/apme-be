@@ -5,7 +5,6 @@ import type { Env } from "../env";
 export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
 export const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-export const TOKEN_2022_PROGRAM = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 export const ATA_PROGRAM = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 export const ATA_RENT_LAMPORTS = 2039280;
 
@@ -59,7 +58,7 @@ export async function lookupTables(conn: Connection, addresses: string[]): Promi
 
 // A blockhash is valid ~60s; reuse one for 15s so back-to-back quotes skip the RPC call.
 let bhCache: { at: number; blockhash: string; lastValidBlockHeight: number } | null = null;
-export async function recentBlockhash(conn: Connection) {
+async function recentBlockhash(conn: Connection) {
   if (bhCache && Date.now() - bhCache.at < 15_000) return bhCache;
   const r = await conn.getLatestBlockhash("confirmed");
   bhCache = { at: Date.now(), ...r };

@@ -3,7 +3,7 @@ import type { Sql } from "../lib/db";
 export type UserRow = { id: string; handle: string | null; avatar_url: string | null; referral_code: string; invited_by: string | null; activated_at: number | null; created_at: number };
 export type WalletRow = { address: string; user_id: string; chain: string; hd_index: number; label: string; is_default: boolean; created_at: number };
 export type SettingsRow = { slippage_bps: number; quick_buy_usd: number[] | string; quick_sell_pct: number[] | string; priority: string; confirm_before_trade: boolean; hide_dust: boolean };
-export type InviteRow = { code: string; kind: string; owner_user_id: string | null; max_uses: number; uses: number; label: string | null; expires_at: number | null; created_at: number };
+type InviteRow = { code: string; kind: string; owner_user_id: string | null; max_uses: number; uses: number; label: string | null; expires_at: number | null; created_at: number };
 
 export const accountRepo = {
   touch: (sql: Sql, id: string, t: number, emailHash: string | null) =>

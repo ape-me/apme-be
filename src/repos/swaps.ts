@@ -1,6 +1,6 @@
 import type { Sql } from "../lib/db";
 
-export type SwapRow = {
+type SwapRow = {
   id: string; user_id: string; wallet: string; side: string; input_mint: string; output_mint: string; symbol: string | null;
   in_raw: string; out_raw: string | null; min_out_raw: string | null; in_usd: number | null; out_usd: number | null;
   fee_bps: number; fee_raw: string | null; fee_usd: number | null; price_impact_pct: number | null; premium_pct: number | null; priority: string;

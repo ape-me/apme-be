@@ -1,8 +1,7 @@
 import type { Env } from "../env";
 import { unauthorized } from "./errors";
 
-// Privy identity tokens: ES256 JWTs signed with the app's key, iss=privy.io, aud=<app id>.
-// Verified locally against the app's JWKS (public, cached), so no Privy call per request.
+// Privy identity tokens: ES256 JWTs (iss=privy.io, aud=app id) verified locally against the cached JWKS.
 
 export type PrivyUser = { id: string; email: string | null; wallets: { address: string; chain: "solana" | "evm" }[] };
 
@@ -46,8 +45,7 @@ export async function verifyIdToken(env: Env, token: string): Promise<PrivyUser>
   return { id: p.sub, email, wallets };
 }
 
-// Access tokens carry no wallets. With the app secret we can ask Privy for the user's linked accounts instead
-// (server-to-server, cached a minute per user). Used only when the identity token isn't available.
+// Fallback when only an access token is present: fetch linked accounts from Privy, cached a minute per user.
 const userCache = new Map<string, { at: number; wallets: PrivyUser["wallets"]; email: string | null }>();
 export async function fetchUserAccounts(env: Env, did: string): Promise<{ wallets: PrivyUser["wallets"]; email: string | null } | null> {
   if (!env.PRIVY_APP_ID || !env.PRIVY_APP_SECRET) return null;

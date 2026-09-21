@@ -1,5 +1,5 @@
 // Minimal Resend client: one email, or a batch of up to 100. Throws on non-2xx so callers decide what to do.
-export type Mail = { from: string; to: string; subject: string; text: string; html?: string };
+type Mail = { from: string; to: string; subject: string; text: string; html?: string };
 
 async function post(apiKey: string, path: string, body: unknown) {
   const r = await fetch(`https://api.resend.com${path}`, {

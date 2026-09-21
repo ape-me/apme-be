@@ -26,9 +26,9 @@ const cols = (sql: Sql) => sql`
 export type Sort = "volume" | "new" | "mcap" | "vol5m" | "vol1h" | "vol24h" | "txns1h" | "progress" | "change1h" | "change24h";
 export type Column = "new" | "graduating" | "graduated";
 
-export const GRADUATING_PCT = 60;
+const GRADUATING_PCT = 60;
 const NEW_WINDOW = 86400;
-export const LAUNCHPADS = ["stonkfun", "pumpfun", "dbc"];
+const LAUNCHPADS = ["stonkfun", "pumpfun", "dbc"];
 
 // Sort key expression. Every key is non-null so keyset pagination stays total.
 const sortExpr = (sql: Sql, sort: Sort) => {
@@ -79,7 +79,7 @@ const filterWhere = (sql: Sql, f: TokenFilters, now: number) => {
   return parts.reduce((acc, p) => sql`${acc} ${p}`, sql``);
 };
 
-export type ListArgs = { stock?: string; column?: Column; sort: Sort; limit: number; after?: { v: number; mint: string }; filters: TokenFilters };
+type ListArgs = { stock?: string; column?: Column; sort: Sort; limit: number; after?: { v: number; mint: string }; filters: TokenFilters };
 
 export const tokensRepo = {
   // One list. Keyset pagination on (sort value, mint); `after` comes from the cursor of the previous page.

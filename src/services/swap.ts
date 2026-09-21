@@ -7,12 +7,10 @@ import { swapsRepo } from "../repos/swaps";
 import { solPrice as solUsd } from "../lib/rpc";
 import type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 
-// USDC-only trading. Buy = USDC → token, sell = token → USDC. Our 1% is a plain USDC transfer to the fee wallet
-// (input side on buys, min-out side on sells), so no Jupiter referral accounts and no 20% cut. We are the fee payer
-// and we pay token-account rent, so the user never needs SOL.
+// USDC-only trading; our 1% is a direct USDC transfer to the fee wallet, we pay gas, user pays rent in USDC.
 
-export const FEE_BPS = 100;
-export const REFERRAL_SHARE = 0.2;
+const FEE_BPS = 100;
+const REFERRAL_SHARE = 0.2;
 const MAX_SPONSORED_PER_HOUR = 20;
 const QUOTE_TTL_S = 60;
 const PRIORITY = {
@@ -31,10 +29,10 @@ const now = () => Math.floor(Date.now() / 1000);
 type JupQuote = { inAmount: string; outAmount: string; otherAmountThreshold: string; priceImpactPct: string; swapUsdValue?: string; slippageBps: number; routePlan: unknown[]; error?: string; errorCode?: string };
 type JupIxs = { computeBudgetInstructions: JupIx[]; setupInstructions: JupIx[]; swapInstruction: JupIx; cleanupInstruction: JupIx | null; otherInstructions?: JupIx[]; addressLookupTableAddresses: string[]; prioritizationFeeLamports?: number; error?: string };
 
-export type QuoteInput = { inputMint: string; outputMint: string; amount: string; taker: string; slippageBps?: number; priority?: "normal" | "fast" | "turbo" };
+type QuoteInput = { inputMint: string; outputMint: string; amount: string; taker: string; slippageBps?: number; priority?: "normal" | "fast" | "turbo" };
 
 // Builds the full transaction for a quote without recording anything. Shared by the real quote and the admin simulator.
-export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { slippageBps: number; priority: string }) {
+async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { slippageBps: number; priority: string }) {
   const inputMint = resolveMint(q.inputMint), outputMint = resolveMint(q.outputMint);
   if (inputMint === outputMint) throw badRequest("inputMint and outputMint are the same");
   const side = inputMint === USDC_MINT ? "buy" : outputMint === USDC_MINT ? "sell" : null;
@@ -50,8 +48,7 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
   // Fee on the USDC side. Buys: taken off the top, the rest is swapped. Sells: 1% of the guaranteed minimum out.
   const feeOnInput = side === "buy" ? (amount * BigInt(FEE_BPS)) / 10_000n : 0n;
   const swapAmount = amount - feeOnInput;
-  // Direct routes open no intermediate token accounts (each costs the user $0.24 of rent), so for stocks we take the
-  // direct quote unless the multi-hop one pays more than 0.5% better.
+  // Prefer direct routes for stocks (no intermediate token accounts) unless multi-hop pays >0.5% more.
   const getQuote = async (direct: boolean) => {
     const r = await fetch(`${jupBase(env)}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${swapAmount}&slippageBps=${slippageBps}&restrictIntermediateTokens=true${direct ? "&onlyDirectRoutes=true" : ""}`, { headers: jupHeaders(env) });
     const j = (await r.json()) as JupQuote;
@@ -85,8 +82,7 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
   const ixs = (await ir.json()) as JupIxs;
   if (!ir.ok || ixs.error) throw new HttpError(422, `jupiter: ${ixs.error ?? ir.status}`);
 
-  // Token accounts the route needs to open: we front the SOL (user has none) and charge the same value in USDC.
-  // Jupiter's idempotent create is still emitted for accounts that exist, so we check the chain and only count real ones.
+  // Rent for token accounts the route really opens: we front the SOL, charge the same value in USDC.
   const conn = connection(env);
   const setupAll = ixs.setupInstructions.map(fromJup);
   const ataIxs = setupAll.filter((t) => t.programId.equals(ATA_PROGRAM) && t.keys[1]);
