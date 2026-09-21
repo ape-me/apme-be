@@ -4,6 +4,7 @@ import type { Sql } from "../lib/db";
 import { HttpError, badRequest, notFound } from "../lib/errors";
 import { USDC_MINT, SOL_MINT, TOKEN_PROGRAM, ATA_PROGRAM, ATA_RENT_LAMPORTS, connection, gasKeypair, ata, transferChecked, createAtaIdempotent, fromJup, lookupTables, buildV0, sha256hex, u8, type JupIx } from "../lib/solana";
 import { swapsRepo } from "../repos/swaps";
+import { solPrice as solUsd } from "../lib/rpc";
 import type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 
 // USDC-only trading. Buy = USDC → token, sell = token → USDC. Our 1% is a plain USDC transfer to the fee wallet
@@ -52,12 +53,19 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
   // Fee on the USDC side. Buys: taken off the top, the rest is swapped. Sells: 1% of the guaranteed minimum out.
   const feeOnInput = side === "buy" ? (amount * BigInt(FEE_BPS)) / 10_000n : 0n;
   const swapAmount = amount - feeOnInput;
-  const jq = await fetch(`${jupBase(env)}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${swapAmount}&slippageBps=${slippageBps}&restrictIntermediateTokens=true`, { headers: jupHeaders(env) });
-  const jqj = (await jq.json()) as JupQuote;
-  if (!jq.ok || jqj.error) {
-    const msg = (jqj.error ?? "").toLowerCase();
-    throw new HttpError(422, msg.includes("route") ? "no_route" : msg.includes("amount") ? "amount_too_small" : `jupiter: ${jqj.error ?? jq.status}`);
+  // Direct routes open no intermediate token accounts (each costs the user $0.24 of rent), so for stocks we take the
+  // direct quote unless the multi-hop one pays more than 0.5% better.
+  const getQuote = async (direct: boolean) => {
+    const r = await fetch(`${jupBase(env)}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${swapAmount}&slippageBps=${slippageBps}&restrictIntermediateTokens=true${direct ? "&onlyDirectRoutes=true" : ""}`, { headers: jupHeaders(env) });
+    const j = (await r.json()) as JupQuote;
+    return { ok: r.ok && !j.error, status: r.status, j };
+  };
+  const [multi, direct] = await Promise.all([getQuote(false), stock ? getQuote(true) : Promise.resolve(null)]);
+  if (!multi.ok) {
+    const msg = (multi.j.error ?? "").toLowerCase();
+    throw new HttpError(422, msg.includes("route") ? "no_route" : msg.includes("amount") ? "amount_too_small" : `jupiter: ${multi.j.error ?? multi.status}`);
   }
+  const jqj = direct?.ok && Number(direct.j.outAmount) >= Number(multi.j.outAmount) * 0.995 ? direct.j : multi.j;
   const minOut = BigInt(jqj.otherAmountThreshold);
   const feeOnOutput = side === "sell" ? (minOut * BigInt(FEE_BPS)) / 10_000n : 0n;
   const feeRaw = side === "buy" ? feeOnInput : feeOnOutput;
@@ -76,23 +84,35 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
   const ixs = (await ir.json()) as JupIxs;
   if (!ir.ok || ixs.error) throw new HttpError(422, `jupiter: ${ixs.error ?? ir.status}`);
 
+  // Token accounts the route needs to open: we front the SOL (user has none) and charge the same value in USDC.
+  // Jupiter's idempotent create is still emitted for accounts that exist, so we check the chain and only count real ones.
+  const conn = connection(env);
+  const setupAll = ixs.setupInstructions.map(fromJup);
+  const ataIxs = setupAll.filter((t) => t.programId.equals(ATA_PROGRAM) && t.keys[1]);
+  const existing = ataIxs.length ? await conn.getMultipleAccountsInfo(ataIxs.map((t) => t.keys[1]!.pubkey)) : [];
   let rentLamports = 0; const rentMints: string[] = [];
-  const setup = ixs.setupInstructions.map((ix) => {
-    const t = fromJup(ix);
-    if (t.programId.equals(ATA_PROGRAM) && t.keys[0]) { t.keys[0] = { pubkey: gas.publicKey, isSigner: true, isWritable: true }; rentLamports += ATA_RENT_LAMPORTS; rentMints.push(t.keys[3]?.pubkey.toBase58() ?? ""); }
-    return t;
+  const setup = setupAll.filter((t) => {
+    if (!t.programId.equals(ATA_PROGRAM) || !t.keys[0]) return true;
+    const i = ataIxs.indexOf(t);
+    if (existing[i]) return false;                                   // already open: drop the instruction
+    t.keys[0] = { pubkey: gas.publicKey, isSigner: true, isWritable: true };
+    rentLamports += ATA_RENT_LAMPORTS; rentMints.push(t.keys[3]?.pubkey.toBase58() ?? "");
+    return true;
   });
+  const solUsdNow = await solUsd();
+  const rentUsd = solUsdNow ? Math.ceil((rentLamports / 1e9) * solUsdNow * 100) / 100 : 0;
+  const rentRaw = BigInt(Math.round(rentUsd * 1e6));
   const usdcMint = new PublicKey(USDC_MINT), feeWallet = new PublicKey(env.FEE_WALLET!);
-  const feeIx = feeRaw > 0n ? [
+  const chargeRaw = feeRaw + rentRaw;
+  const feeIx = chargeRaw > 0n ? [
     createAtaIdempotent(gas.publicKey, feeWallet, usdcMint, TOKEN_PROGRAM),
-    transferChecked(ata(taker, usdcMint), usdcMint, ata(feeWallet, usdcMint), taker, feeRaw, 6, TOKEN_PROGRAM),
+    transferChecked(ata(taker, usdcMint), usdcMint, ata(feeWallet, usdcMint), taker, chargeRaw, 6, TOKEN_PROGRAM),
   ] : [];
   const all = [
     ...ixs.computeBudgetInstructions.map(fromJup), ...setup,
     ...(side === "buy" ? feeIx : []), fromJup(ixs.swapInstruction), ...(ixs.cleanupInstruction ? [fromJup(ixs.cleanupInstruction)] : []),
     ...(side === "sell" ? feeIx : []), ...(ixs.otherInstructions ?? []).map(fromJup),
   ];
-  const conn = connection(env);
   const alts = await lookupTables(conn, ixs.addressLookupTableAddresses);
   const { tx, lastValidBlockHeight } = await buildV0(conn, gas.publicKey, all, alts);
   const msgBytes = tx.message.serialize();
@@ -100,7 +120,7 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
   const gasLamports = (ixs.prioritizationFeeLamports ?? 0) + 5000 * 2;
   const premiumPct = stock?.premium_pct == null ? null : Number(stock.premium_pct);
   const tokenDecimals = stock?.decimals ?? meme?.decimals ?? 6, multiplier = stock ? Number(stock.multiplier ?? 1) : 1;
-  return { tokenDecimals, multiplier, tx, msgHash, lastValidBlockHeight, gasLamports, rentLamports, rentMints, side, inputMint, outputMint, symbol, amount, jqj, minOut, feeRaw, inUsd, outUsd, slippageBps, priority, premiumPct, stock, gasPubkey: gas.publicKey.toBase58() };
+  return { tokenDecimals, multiplier, rentUsd, rentRaw, tx, msgHash, lastValidBlockHeight, gasLamports, rentLamports, rentMints, side, inputMint, outputMint, symbol, amount, jqj, minOut, feeRaw, inUsd, outUsd, slippageBps, priority, premiumPct, stock, gasPubkey: gas.publicKey.toBase58() };
 }
 
 export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], settings: SettingsRow, q: QuoteInput) {
@@ -119,6 +139,8 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
     inDecimals: side === "buy" ? 6 : b.tokenDecimals, outDecimals: side === "buy" ? b.tokenDecimals : 6, multiplier: b.multiplier,
     inUsd, outUsd, priceImpactPct: Number(jqj.priceImpactPct) * 100, slippageBps,
     fee: { bps: FEE_BPS, amountRaw: feeRaw.toString(), mint: USDC_MINT, usd: Number(feeRaw) / 1e6 },
+    rent: { accounts: b.rentMints.length, lamports: rentLamports, usd: b.rentUsd, amountRaw: b.rentRaw.toString(), paidBy: "user", note: b.rentUsd > 0 ? "one-time network fee to open the token account, charged in USDC" : null },
+    totalChargeUsd: (Number(feeRaw) + Number(b.rentRaw)) / 1e6,
     gas: { paidBy: "apeme", priority, lamports: gasLamports, rentLamports },
     premiumPct, markUsd: stock?.mark_usd == null ? null : Number(stock.mark_usd),
     transaction: Buffer.from(tx.serialize()).toString("base64"),
@@ -208,6 +230,6 @@ export async function simulate(env: Env, sql: Sql, q: QuoteInput) {
   return {
     ok: !sim.value.err, err: sim.value.err, unitsConsumed: sim.value.unitsConsumed, logs: (sim.value.logs ?? []).slice(-12),
     side: b.side, symbol: b.symbol, inAmount: b.amount.toString(), outAmount: b.jqj.outAmount, feeRaw: b.feeRaw.toString(), inUsd: b.inUsd, outUsd: b.outUsd,
-    gasLamports: b.gasLamports, rentLamports: b.rentLamports, feePayer: b.gasPubkey, txBytes: b.tx.serialize().length,
+    gasLamports: b.gasLamports, rentLamports: b.rentLamports, rentUsd: b.rentUsd, rentAccounts: b.rentMints.length, feePayer: b.gasPubkey, txBytes: b.tx.serialize().length,
   };
 }
