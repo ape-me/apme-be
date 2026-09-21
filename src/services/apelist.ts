@@ -2,7 +2,16 @@ import type { Env } from "../env";
 import { resend } from "../lib/resend";
 
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
-const DISPOSABLE = ["mailinator.com", "guerrillamail.com", "10minutemail.com", "tempmail.com", "yopmail.com", "sharklasers.com", "guerrillamailblock.com", "temp-mail.org"];
+const DISPOSABLE = [
+  "mailinator.com",
+  "guerrillamail.com",
+  "10minutemail.com",
+  "tempmail.com",
+  "yopmail.com",
+  "sharklasers.com",
+  "guerrillamailblock.com",
+  "temp-mail.org",
+];
 
 export function normalizeEmail(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
@@ -13,7 +22,11 @@ export function normalizeEmail(raw: unknown): string | null {
   return e;
 }
 
-const b64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const b64url = (b: Uint8Array) =>
+  btoa(String.fromCharCode(...b))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 export const newToken = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
 
 // sha256(ip + daily salt): lets us spot abuse within a day without ever storing an IP.
@@ -25,10 +38,19 @@ export async function ipHash(ip: string, salt: string): Promise<string> {
 
 export const apelist = {
   /** Insert if new. Returns true when the row was created, false when the email already existed. */
-  add: async (env: Env, email: string, token: string, ip_hash: string, ref: string | null, ua: string | null): Promise<boolean> => {
+  add: async (
+    env: Env,
+    email: string,
+    token: string,
+    ip_hash: string,
+    ref: string | null,
+    ua: string | null,
+  ): Promise<boolean> => {
     const r = await env.DB.prepare(
       "INSERT INTO apelist (email, confirm_token, ip_hash, ref, user_agent) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(email) DO NOTHING",
-    ).bind(email, token, ip_hash, ref, ua).run();
+    )
+      .bind(email, token, ip_hash, ref, ua)
+      .run();
     return (r.meta.changes ?? 0) > 0;
   },
 
@@ -42,17 +64,28 @@ export const apelist = {
     if (!/^[A-Za-z0-9_-]{40,50}$/.test(token)) return false;
     const r = await env.DB.prepare(
       "UPDATE apelist SET confirmed_at = COALESCE(confirmed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE confirm_token = ?1",
-    ).bind(token).run();
+    )
+      .bind(token)
+      .run();
     return (r.meta.changes ?? 0) > 0;
   },
 
   sendConfirmation: async (env: Env, email: string, token: string): Promise<void> => {
-    if (!env.RESEND_API_KEY) { console.warn("apelist: RESEND_API_KEY unset, skipping email"); return; }
+    if (!env.RESEND_API_KEY) {
+      console.warn("apelist: RESEND_API_KEY unset, skipping email");
+      return;
+    }
     const link = `${env.PUBLIC_URL}/api/apelist/confirm?t=${token}`;
     const text = `ape memes. ape stonks.\n\ntap to confirm your spot: ${link}\n\nwe'll email you once when ApeMe hits the App Store. that's it.`;
     const html = `<p>ape memes. ape stonks.</p><p><a href="${link}">tap to confirm your spot</a></p><p>we'll email you once when ApeMe hits the App Store. that's it.</p>`;
     try {
-      await resend.send(env.RESEND_API_KEY, { from: "ApeMe <hey@apeme.fun>", to: email, subject: "you're on the apelist", text, html });
+      await resend.send(env.RESEND_API_KEY, {
+        from: "ApeMe <hey@apeme.fun>",
+        to: email,
+        subject: "you're on the apelist",
+        text,
+        html,
+      });
     } catch (e) {
       console.error("apelist: confirmation email failed", (e as Error).message);
     }

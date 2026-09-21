@@ -3,21 +3,36 @@ import { unauthorized } from "./errors";
 
 // Privy identity tokens: ES256 JWTs (iss=privy.io, aud=app id) verified locally against the cached JWKS.
 
-export type PrivyUser = { id: string; email: string | null; wallets: { address: string; chain: "solana" | "evm" }[] };
+export type PrivyUser = {
+  id: string;
+  email: string | null;
+  wallets: { address: string; chain: "solana" | "evm" }[];
+};
 
 type Jwk = JsonWebKey & { kid: string };
 let jwksCache: { at: number; keys: Jwk[] } | null = null;
 
 async function jwks(appId: string): Promise<Jwk[]> {
   if (jwksCache && Date.now() - jwksCache.at < 3600_000) return jwksCache.keys;
-  const r = await fetch(`https://auth.privy.io/api/v1/apps/${appId}/jwks.json`, { cf: { cacheTtl: 3600, cacheEverything: true } } as RequestInit);
+  const r = await fetch(`https://auth.privy.io/api/v1/apps/${appId}/jwks.json`, {
+    cf: { cacheTtl: 3600, cacheEverything: true },
+  } as RequestInit);
   if (!r.ok) throw new Error(`privy jwks ${r.status}`);
   const j = (await r.json()) as { keys: Jwk[] };
   jwksCache = { at: Date.now(), keys: j.keys };
   return j.keys;
 }
 
-const b64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(s.length + ((4 - (s.length % 4)) % 4), "=")), (c) => c.charCodeAt(0));
+const b64u = (s: string) =>
+  Uint8Array.from(
+    atob(
+      s
+        .replace(/-/g, "+")
+        .replace(/_/g, "/")
+        .padEnd(s.length + ((4 - (s.length % 4)) % 4), "="),
+    ),
+    (c) => c.charCodeAt(0),
+  );
 const dec = new TextDecoder();
 
 export async function verifyIdToken(env: Env, token: string): Promise<PrivyUser> {
@@ -29,34 +44,89 @@ export async function verifyIdToken(env: Env, token: string): Promise<PrivyUser>
   if (header.alg !== "ES256") throw unauthorized();
   let keys = await jwks(env.PRIVY_APP_ID);
   let jwk = keys.find((k) => k.kid === header.kid) ?? keys[0];
-  if (header.kid && !keys.some((k) => k.kid === header.kid)) { jwksCache = null; keys = await jwks(env.PRIVY_APP_ID); jwk = keys.find((k) => k.kid === header.kid) ?? keys[0]; }
+  if (header.kid && !keys.some((k) => k.kid === header.kid)) {
+    jwksCache = null;
+    keys = await jwks(env.PRIVY_APP_ID);
+    jwk = keys.find((k) => k.kid === header.kid) ?? keys[0];
+  }
   if (!jwk) throw unauthorized();
-  const key = await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
-  const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, b64u(sig), new TextEncoder().encode(`${h}.${body}`));
-  if (!ok) { console.warn("privy: bad signature", { kid: header.kid, keys: keys.map((k) => k.kid) }); throw unauthorized(); }
-  const p = JSON.parse(dec.decode(b64u(body))) as { iss: string; aud: string | string[]; sub: string; exp: number; linked_accounts?: string };
+  const key = await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, [
+    "verify",
+  ]);
+  const ok = await crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    b64u(sig),
+    new TextEncoder().encode(`${h}.${body}`),
+  );
+  if (!ok) {
+    console.warn("privy: bad signature", { kid: header.kid, keys: keys.map((k) => k.kid) });
+    throw unauthorized();
+  }
+  const p = JSON.parse(dec.decode(b64u(body))) as {
+    iss: string;
+    aud: string | string[];
+    sub: string;
+    exp: number;
+    linked_accounts?: string;
+  };
   const aud = Array.isArray(p.aud) ? p.aud : [p.aud];
-  if (p.iss !== "privy.io" || !aud.includes(env.PRIVY_APP_ID) || p.exp * 1000 < Date.now()) { console.warn("privy: claims", { iss: p.iss, aud, exp: p.exp }); throw unauthorized(); }
-  const linked = p.linked_accounts ? (JSON.parse(p.linked_accounts) as { type: string; address?: string; chain_type?: string; wallet_client_type?: string }[]) : [];
+  if (p.iss !== "privy.io" || !aud.includes(env.PRIVY_APP_ID) || p.exp * 1000 < Date.now()) {
+    console.warn("privy: claims", { iss: p.iss, aud, exp: p.exp });
+    throw unauthorized();
+  }
+  const linked = p.linked_accounts
+    ? (JSON.parse(p.linked_accounts) as {
+        type: string;
+        address?: string;
+        chain_type?: string;
+        wallet_client_type?: string;
+      }[])
+    : [];
   const wallets = linked
-    .filter((a) => a.type === "wallet" && a.address && (a.chain_type === "solana" || a.chain_type === "ethereum"))
-    .map((a) => ({ address: a.address!, chain: a.chain_type === "solana" ? ("solana" as const) : ("evm" as const) }));
+    .filter(
+      (a) => a.type === "wallet" && a.address && (a.chain_type === "solana" || a.chain_type === "ethereum"),
+    )
+    .map((a) => ({
+      address: a.address!,
+      chain: a.chain_type === "solana" ? ("solana" as const) : ("evm" as const),
+    }));
   const email = linked.find((a) => a.type === "email")?.address ?? null;
   return { id: p.sub, email, wallets };
 }
 
 // Fallback when only an access token is present: fetch linked accounts from Privy, cached a minute per user.
 const userCache = new Map<string, { at: number; wallets: PrivyUser["wallets"]; email: string | null }>();
-export async function fetchUserAccounts(env: Env, did: string): Promise<{ wallets: PrivyUser["wallets"]; email: string | null } | null> {
+export async function fetchUserAccounts(
+  env: Env,
+  did: string,
+): Promise<{ wallets: PrivyUser["wallets"]; email: string | null } | null> {
   if (!env.PRIVY_APP_ID || !env.PRIVY_APP_SECRET) return null;
   const hit = userCache.get(did);
   if (hit && Date.now() - hit.at < 60_000) return hit;
-  const r = await fetch(`https://auth.privy.io/api/v1/users/${encodeURIComponent(did)}`, { headers: { authorization: `Basic ${btoa(`${env.PRIVY_APP_ID}:${env.PRIVY_APP_SECRET}`)}`, "privy-app-id": env.PRIVY_APP_ID } });
-  if (!r.ok) { console.warn("privy: users api", r.status); return null; }
-  const j = (await r.json()) as { linked_accounts?: { type: string; address?: string; chain_type?: string }[] };
+  const r = await fetch(`https://auth.privy.io/api/v1/users/${encodeURIComponent(did)}`, {
+    headers: {
+      authorization: `Basic ${btoa(`${env.PRIVY_APP_ID}:${env.PRIVY_APP_SECRET}`)}`,
+      "privy-app-id": env.PRIVY_APP_ID,
+    },
+  });
+  if (!r.ok) {
+    console.warn("privy: users api", r.status);
+    return null;
+  }
+  const j = (await r.json()) as {
+    linked_accounts?: { type: string; address?: string; chain_type?: string }[];
+  };
   const linked = j.linked_accounts ?? [];
   const out = {
-    wallets: linked.filter((a) => a.type === "wallet" && a.address && (a.chain_type === "solana" || a.chain_type === "ethereum")).map((a) => ({ address: a.address!, chain: a.chain_type === "solana" ? ("solana" as const) : ("evm" as const) })),
+    wallets: linked
+      .filter(
+        (a) => a.type === "wallet" && a.address && (a.chain_type === "solana" || a.chain_type === "ethereum"),
+      )
+      .map((a) => ({
+        address: a.address!,
+        chain: a.chain_type === "solana" ? ("solana" as const) : ("evm" as const),
+      })),
     email: linked.find((a) => a.type === "email")?.address ?? null,
   };
   userCache.set(did, { at: Date.now(), ...out });

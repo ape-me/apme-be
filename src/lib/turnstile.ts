@@ -4,8 +4,13 @@ export async function verifyTurnstile(secret: string, token: string, ip?: string
   try {
     const body = new URLSearchParams({ secret, response: token });
     if (ip) body.set("remoteip", ip);
-    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body });
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      body,
+    });
     const j = (await r.json()) as { success?: boolean };
     return j.success === true;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }

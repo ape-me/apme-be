@@ -3,7 +3,9 @@ type Mail = { from: string; to: string; subject: string; text: string; html?: st
 
 async function post(apiKey: string, path: string, body: unknown) {
   const r = await fetch(`https://api.resend.com${path}`, {
-    method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`resend ${path}: ${r.status} ${await r.text()}`);
   return r.json();

@@ -24,7 +24,7 @@ ingest.post("/trades", async (c) => {
     const msg: WsMessage = { t: "trade", ...rest };
     push(t.mint, msg);
     push(FLOOR, msg);
-    if (quoteMint) push(STOCK(quoteMint), msg);   // the stock page's live tape
+    if (quoteMint) push(STOCK(quoteMint), msg); // the stock page's live tape
   }
   for (const tk of r.data.tokens) {
     const msg: WsMessage = { t: "token", ...tk };
@@ -34,5 +34,11 @@ ingest.post("/trades", async (c) => {
   }
   for (const p of r.data.prices) push(STOCK(p.mint), { t: "price", ...p });
   c.executionCtx.waitUntil(rooms.publish(c.env, byRoom));
-  return c.json({ ok: true, trades: r.data.trades.length, tokens: r.data.tokens.length, prices: r.data.prices.length, rooms: byRoom.size });
+  return c.json({
+    ok: true,
+    trades: r.data.trades.length,
+    tokens: r.data.tokens.length,
+    prices: r.data.prices.length,
+    rooms: byRoom.size,
+  });
 });

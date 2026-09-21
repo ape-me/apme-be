@@ -17,7 +17,14 @@ export class Room extends DurableObject<Env> {
     if (url.pathname === "/broadcast" && req.method === "POST") {
       const body = await req.text();
       let n = 0;
-      for (const ws of this.ctx.getWebSockets()) { try { ws.send(body); n++; } catch { /* closing */ } }
+      for (const ws of this.ctx.getWebSockets()) {
+        try {
+          ws.send(body);
+          n++;
+        } catch {
+          /* closing */
+        }
+      }
       return Response.json({ sent: n });
     }
     if (url.pathname === "/size") return Response.json({ sockets: this.ctx.getWebSockets().length });
@@ -25,8 +32,20 @@ export class Room extends DurableObject<Env> {
   }
 
   webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer) {
-    if (msg === "ping") ws.send("pong");   // phones send ping every 25s; anything else is ignored
+    if (msg === "ping") ws.send("pong"); // phones send ping every 25s; anything else is ignored
   }
-  webSocketClose(ws: WebSocket) { try { ws.close(); } catch { /* already closed */ } }
-  webSocketError(ws: WebSocket) { try { ws.close(); } catch { /* already closed */ } }
+  webSocketClose(ws: WebSocket) {
+    try {
+      ws.close();
+    } catch {
+      /* already closed */
+    }
+  }
+  webSocketError(ws: WebSocket) {
+    try {
+      ws.close();
+    } catch {
+      /* already closed */
+    }
+  }
 }

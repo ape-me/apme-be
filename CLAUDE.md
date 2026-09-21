@@ -6,4 +6,6 @@ Layout: `src/contract.ts` (every boundary shape, zod) → `src/repos` (SQL only)
 
 Apelist (email waitlist) lives in D1 (`migrations/d1`), routes in `src/routes/apelist.ts`, launch blast in `scripts/blast.ts` (never run automatically). Secrets: TURNSTILE_SECRET, RESEND_API_KEY, IP_SALT.
 
-Rules: never commit secrets (`.dev.vars`, `.env`). Bun for install and scripts, `wrangler` for dev and deploy. Commits carry no AI attribution lines.
+Rules: never commit secrets (`.dev.vars`, `.env`, `.secrets/`). Bun for install and scripts, `wrangler` for dev and deploy. Commits carry no AI attribution lines.
+
+Before every commit: `bun run check` (tsc with unused checks, oxlint, prettier at 110 cols). No unused exports, no repeated logic, comments are sparse one-liners. Middleware lives in `src/middleware`, input parsing goes through `lib/validate.ts`.

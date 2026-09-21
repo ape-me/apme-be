@@ -2,7 +2,10 @@
 const enc = new TextEncoder();
 
 async function key(secret: string) {
-  return crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+  return crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+    "verify",
+  ]);
 }
 export async function sign(secret: string, body: string): Promise<string> {
   const sig = await crypto.subtle.sign("HMAC", await key(secret), enc.encode(body));

@@ -12,7 +12,9 @@ export const withDb: MiddlewareHandler<{ Bindings: Env; Variables: DbVars }> = a
   const sql = postgres(url, { max: 2, prepare: false, fetch_types: false, idle_timeout: 5 });
   c.set("sql", sql);
   c.set("t0", Date.now());
-  try { await next(); } finally {
+  try {
+    await next();
+  } finally {
     c.header("Server-Timing", `app;dur=${Date.now() - c.get("t0")}`);
     c.executionCtx.waitUntil(sql.end({ timeout: 1 }));
   }

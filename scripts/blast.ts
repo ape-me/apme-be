@@ -6,8 +6,12 @@
 // Talks to D1 through wrangler so it needs the Cloudflare token in the environment (source /root/.cf_token).
 import { $ } from "bun";
 
-const apiKey = process.env.RESEND_API_KEY; const url = process.env.APP_STORE_URL;
-if (!apiKey || !url) { console.error("need RESEND_API_KEY and APP_STORE_URL"); process.exit(1); }
+const apiKey = process.env.RESEND_API_KEY;
+const url = process.env.APP_STORE_URL;
+if (!apiKey || !url) {
+  console.error("need RESEND_API_KEY and APP_STORE_URL");
+  process.exit(1);
+}
 
 async function d1<T>(sql: string): Promise<T[]> {
   const out = await $`bunx wrangler d1 execute apeme --remote --json --command ${sql}`.text();
@@ -19,15 +23,30 @@ const html = `<p>ApeMe is live.</p><p>ape memes. ape stonks. now on the App Stor
 
 let sent = 0;
 for (;;) {
-  const rows = await d1<{ email: string }>("SELECT email FROM apelist WHERE confirmed_at IS NOT NULL AND blasted_at IS NULL ORDER BY created_at LIMIT 100");
+  const rows = await d1<{ email: string }>(
+    "SELECT email FROM apelist WHERE confirmed_at IS NOT NULL AND blasted_at IS NULL ORDER BY created_at LIMIT 100",
+  );
   if (rows.length === 0) break;
   const r = await fetch("https://api.resend.com/emails/batch", {
-    method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(rows.map(({ email }) => ({ from: "ApeMe <hey@apeme.fun>", to: email, subject: "ApeMe is live", text, html }))),
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(
+      rows.map(({ email }) => ({
+        from: "ApeMe <hey@apeme.fun>",
+        to: email,
+        subject: "ApeMe is live",
+        text,
+        html,
+      })),
+    ),
   });
-  if (!r.ok) { console.error("resend batch failed", r.status, await r.text()); process.exit(1); }
+  if (!r.ok) {
+    console.error("resend batch failed", r.status, await r.text());
+    process.exit(1);
+  }
   const list = rows.map((x) => `'${x.email.replace(/'/g, "''")}'`).join(",");
   await d1(`UPDATE apelist SET blasted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE email IN (${list})`);
-  sent += rows.length; console.log(`sent ${sent}`);
+  sent += rows.length;
+  console.log(`sent ${sent}`);
 }
 console.log(`done, ${sent} emails`);

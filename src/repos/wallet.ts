@@ -2,18 +2,54 @@ import type { Sql } from "../lib/db";
 
 // What our tape knows about one wallet on one token: what it paid in and took out, in USD at trade time.
 type PositionRow = {
-  token_mint: string; bought_raw: string; sold_raw: string; bought_usd: number; sold_usd: number; n: number; last_ts: number;
+  token_mint: string;
+  bought_raw: string;
+  sold_raw: string;
+  bought_usd: number;
+  sold_usd: number;
+  n: number;
+  last_ts: number;
 };
 type ActivityRow = {
-  signature: string; block_time: number; side: "buy" | "sell"; token_mint: string; symbol: string | null; image: string | null;
-  base_raw: string; quote_raw: string; quote_usd: number | null; decimals: number; quote_mint: string; stock_symbol: string;
-  quote_decimals: number; stock_price_usd: number | null;
+  signature: string;
+  block_time: number;
+  side: "buy" | "sell";
+  token_mint: string;
+  symbol: string | null;
+  image: string | null;
+  base_raw: string;
+  quote_raw: string;
+  quote_usd: number | null;
+  decimals: number;
+  quote_mint: string;
+  stock_symbol: string;
+  quote_decimals: number;
+  stock_price_usd: number | null;
 };
 
-type SwapPositionRow = { mint: string; bought_raw: string; sold_raw: string; bought_usd: number; sold_usd: number };
+type SwapPositionRow = {
+  mint: string;
+  bought_raw: string;
+  sold_raw: string;
+  bought_usd: number;
+  sold_usd: number;
+};
 type SwapActivityRow = {
-  id: string; signature: string | null; side: "buy" | "sell"; status: string; error: string | null; created_at: string; confirmed_at: string | null;
-  input_mint: string; output_mint: string; in_raw: string; out_raw: string | null; in_usd: number | null; out_usd: number | null; fee_usd: number | null; symbol: string | null;
+  id: string;
+  signature: string | null;
+  side: "buy" | "sell";
+  status: string;
+  error: string | null;
+  created_at: string;
+  confirmed_at: string | null;
+  input_mint: string;
+  output_mint: string;
+  in_raw: string;
+  out_raw: string | null;
+  in_usd: number | null;
+  out_usd: number | null;
+  fee_usd: number | null;
+  symbol: string | null;
 };
 
 export const walletRepo = {
@@ -40,7 +76,20 @@ export const walletRepo = {
     FROM trades tr JOIN tokens t ON t.mint = tr.token_mint JOIN stocks s ON s.mint = t.quote_mint
     WHERE tr.wallet = ${wallet} ORDER BY tr.block_time DESC LIMIT ${limit}`,
   // Everything we can price among a wallet's mints: stocks and memes, in one round trip.
-  known: (sql: Sql, mints: string[]) => sql<{ mint: string; kind: "stock" | "meme"; symbol: string | null; name: string | null; image: string | null; decimals: number; price_usd: number | null; change_24h: number | null; quote_symbol: string | null; multiplier: number }[]>`
+  known: (sql: Sql, mints: string[]) => sql<
+    {
+      mint: string;
+      kind: "stock" | "meme";
+      symbol: string | null;
+      name: string | null;
+      image: string | null;
+      decimals: number;
+      price_usd: number | null;
+      change_24h: number | null;
+      quote_symbol: string | null;
+      multiplier: number;
+    }[]
+  >`
     SELECT s.mint, 'stock' AS kind, s.symbol, s.name, s.logo AS image, s.decimals, s.price_usd, s.change_24h, NULL AS quote_symbol, s.multiplier
     FROM stocks s WHERE s.mint IN ${sql(mints)}
     UNION ALL

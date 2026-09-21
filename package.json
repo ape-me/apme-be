@@ -5,6 +5,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260918.1",
     "@types/bun": "latest",
+    "oxlint": "^1.85.0",
+    "prettier": "^3.9.8",
     "wrangler": "^4.134.0"
   },
   "peerDependencies": {
@@ -20,7 +22,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc -p .",
-    "types": "wrangler types"
+    "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
+    "types": "wrangler types",
+    "format": "prettier --write src scripts",
+    "lint": "oxlint src scripts && prettier --check src scripts",
+    "check": "bun run typecheck && bun run lint"
   }
 }

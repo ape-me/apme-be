@@ -1,0 +1,6 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": { "correctness": "error", "suspicious": "warn" },
+  "rules": { "no-unused-vars": "error", "typescript/no-explicit-any": "error", "unicorn/no-array-sort": "off" },
+  "ignorePatterns": ["node_modules", ".wrangler", "dist"]
+}

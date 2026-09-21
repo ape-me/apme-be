@@ -9,8 +9,12 @@ import { quote, submit, txStatus } from "../services/swap";
 
 const MintOrAlias = z.union([Mint, z.enum(["usdc", "native"])]);
 const QuoteBody = z.object({
-  inputMint: MintOrAlias, outputMint: MintOrAlias, amount: z.string().regex(/^\d+$/, "raw integer units of inputMint"), taker: Mint,
-  slippageBps: z.number().int().min(10).max(500).optional(), priority: z.enum(["normal", "fast", "turbo"]).optional(),
+  inputMint: MintOrAlias,
+  outputMint: MintOrAlias,
+  amount: z.string().regex(/^\d+$/, "raw integer units of inputMint"),
+  taker: Mint,
+  slippageBps: z.number().int().min(10).max(500).optional(),
+  priority: z.enum(["normal", "fast", "turbo"]).optional(),
 });
 
 export const swap = new Hono<{ Bindings: Env; Variables: AuthVars }>();
@@ -18,12 +22,22 @@ swap.use("*", withDb, requireAuth, requireActive);
 
 swap.post("/quote", async (c) => {
   const b = parse(QuoteBody, await c.req.json());
-  const { _rentMints, ...res } = await quote(c.env, c.get("sql"), c.get("user"), c.get("wallets"), c.get("settings"), b);
+  const { _rentMints, ...res } = await quote(
+    c.env,
+    c.get("sql"),
+    c.get("user"),
+    c.get("wallets"),
+    c.get("settings"),
+    b,
+  );
   return c.json(res);
 });
 
 swap.post("/submit", async (c) => {
-  const b = parse(z.object({ requestId: z.string().uuid(), signedTransaction: z.string().min(100) }), await c.req.json());
+  const b = parse(
+    z.object({ requestId: z.string().uuid(), signedTransaction: z.string().min(100) }),
+    await c.req.json(),
+  );
   return c.json(await submit(c.env, c.get("sql"), c.get("user"), b.requestId, b.signedTransaction));
 });
 

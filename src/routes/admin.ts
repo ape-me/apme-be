@@ -18,14 +18,32 @@ const Patch = z.object({
   tags: z.array(z.enum(COLLECTION_IDS as [string, ...string[]])).optional(),
   note: z.string().max(200).nullable().optional(),
 });
-const InviteBody = z.object({ count: z.number().int().min(1).max(200).default(1), maxUses: z.number().int().min(1).max(10000).default(1), label: z.string().max(60).optional(), expiresAt: z.number().int().nullable().optional() });
-const SimBody = z.object({ inputMint: z.string(), outputMint: z.string(), amount: z.string().regex(/^\d+$/), taker: Mint });
+const InviteBody = z.object({
+  count: z.number().int().min(1).max(200).default(1),
+  maxUses: z.number().int().min(1).max(10000).default(1),
+  label: z.string().max(60).optional(),
+  expiresAt: z.number().int().nullable().optional(),
+});
+const SimBody = z.object({
+  inputMint: z.string(),
+  outputMint: z.string(),
+  amount: z.string().regex(/^\d+$/),
+  taker: Mint,
+});
 
 export const admin = new Hono<{ Bindings: Env; Variables: DbVars }>();
 admin.use("*", requireAdmin, withDb);
 
 admin.get("/stocks", async (c) => c.json({ stocks: await stocksRepo.withConfig(c.get("sql")) }));
-admin.post("/stocks/:mint", async (c) => c.json(await patchStock(c.get("sql"), parse(Mint, c.req.param("mint")), parse(Patch, await c.req.json().catch(() => ({}))))));
+admin.post("/stocks/:mint", async (c) =>
+  c.json(
+    await patchStock(
+      c.get("sql"),
+      parse(Mint, c.req.param("mint")),
+      parse(Patch, await c.req.json().catch(() => ({}))),
+    ),
+  ),
+);
 
 admin.get("/invites", async (c) => c.json({ invites: await accountRepo.listInvites(c.get("sql")) }));
 admin.post("/invites", async (c) => {
@@ -35,4 +53,6 @@ admin.post("/invites", async (c) => {
 });
 
 admin.get("/gas", async (c) => c.json(await gasInfo(c.env)));
-admin.post("/swap-simulate", async (c) => c.json(await simulate(c.env, c.get("sql"), parse(SimBody, await c.req.json()))));
+admin.post("/swap-simulate", async (c) =>
+  c.json(await simulate(c.env, c.get("sql"), parse(SimBody, await c.req.json()))),
+);
