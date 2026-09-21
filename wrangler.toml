@@ -2,6 +2,9 @@ name = "apme-be"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
+# Run near Hyperdrive/RPC/Jupiter (US east) instead of near the phone: a quote makes ~6 backend round trips, the phone makes 1.
+[placement]
+mode = "smart"
 workers_dev = true
 
 [observability]

@@ -44,14 +44,30 @@ export const fromJup = (ix: JupIx) => new TransactionInstruction({
   keys: ix.accounts.map((a) => ({ pubkey: new PublicKey(a.pubkey), isSigner: a.isSigner, isWritable: a.isWritable })),
 });
 
+// Lookup tables are append-only and Jupiter's rarely change; cache per isolate for 10 minutes.
+const altCache = new Map<string, { at: number; alt: AddressLookupTableAccount }>();
 export async function lookupTables(conn: Connection, addresses: string[]): Promise<AddressLookupTableAccount[]> {
   if (!addresses.length) return [];
-  const infos = await conn.getMultipleAccountsInfo(addresses.map((a) => new PublicKey(a)));
-  return infos.flatMap((info, i) => info ? [new AddressLookupTableAccount({ key: new PublicKey(addresses[i]!), state: AddressLookupTableAccount.deserialize(info.data) })] : []);
+  const t = Date.now();
+  const missing = addresses.filter((a) => !(altCache.get(a) && t - altCache.get(a)!.at < 600_000));
+  if (missing.length) {
+    const infos = await conn.getMultipleAccountsInfo(missing.map((a) => new PublicKey(a)));
+    infos.forEach((info, i) => { if (info) altCache.set(missing[i]!, { at: t, alt: new AddressLookupTableAccount({ key: new PublicKey(missing[i]!), state: AddressLookupTableAccount.deserialize(info.data) }) }); });
+  }
+  return addresses.flatMap((a) => altCache.get(a) ? [altCache.get(a)!.alt] : []);
+}
+
+// A blockhash is valid ~60s; reuse one for 15s so back-to-back quotes skip the RPC call.
+let bhCache: { at: number; blockhash: string; lastValidBlockHeight: number } | null = null;
+export async function recentBlockhash(conn: Connection) {
+  if (bhCache && Date.now() - bhCache.at < 15_000) return bhCache;
+  const r = await conn.getLatestBlockhash("confirmed");
+  bhCache = { at: Date.now(), ...r };
+  return bhCache;
 }
 
 export async function buildV0(conn: Connection, payer: PublicKey, ixs: TransactionInstruction[], alts: AddressLookupTableAccount[]) {
-  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
+  const { blockhash, lastValidBlockHeight } = await recentBlockhash(conn);
   const msg = new TransactionMessage({ payerKey: payer, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message(alts);
   return { tx: new VersionedTransaction(msg), lastValidBlockHeight };
 }

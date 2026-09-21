@@ -45,10 +45,7 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
   let priority = (q.priority ?? defaults.priority) as keyof typeof PRIORITY;
 
   const tokenMint = side === "buy" ? outputMint : inputMint;
-  const [stock] = await swapsRepo.stockMeta(sql, tokenMint);
-  const meme = stock ? null : (await swapsRepo.tokenMeta(sql, tokenMint))[0];
-  if (!stock && !meme) throw notFound("token");
-  const symbol = stock?.symbol ?? meme?.symbol ?? null;
+  const metaP = Promise.all([swapsRepo.stockMeta(sql, tokenMint), swapsRepo.tokenMeta(sql, tokenMint)]);
 
   // Fee on the USDC side. Buys: taken off the top, the rest is swapped. Sells: 1% of the guaranteed minimum out.
   const feeOnInput = side === "buy" ? (amount * BigInt(FEE_BPS)) / 10_000n : 0n;
@@ -60,7 +57,11 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
     const j = (await r.json()) as JupQuote;
     return { ok: r.ok && !j.error, status: r.status, j };
   };
-  const [multi, direct] = await Promise.all([getQuote(false), stock ? getQuote(true) : Promise.resolve(null)]);
+  const [[stockRows, memeRows], multi, solUsdNow] = await Promise.all([metaP, getQuote(false), solUsd()]);
+  const stock = stockRows[0]; const meme = stock ? null : memeRows[0];
+  if (!stock && !meme) throw notFound("token");
+  const symbol = stock?.symbol ?? meme?.symbol ?? null;
+  const direct = stock ? await getQuote(true) : null;
   if (!multi.ok) {
     const msg = (multi.j.error ?? "").toLowerCase();
     throw new HttpError(422, msg.includes("route") ? "no_route" : msg.includes("amount") ? "amount_too_small" : `jupiter: ${multi.j.error ?? multi.status}`);
@@ -89,7 +90,10 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
   const conn = connection(env);
   const setupAll = ixs.setupInstructions.map(fromJup);
   const ataIxs = setupAll.filter((t) => t.programId.equals(ATA_PROGRAM) && t.keys[1]);
-  const existing = ataIxs.length ? await conn.getMultipleAccountsInfo(ataIxs.map((t) => t.keys[1]!.pubkey)) : [];
+  const [existing, alts] = await Promise.all([
+    ataIxs.length ? conn.getMultipleAccountsInfo(ataIxs.map((t) => t.keys[1]!.pubkey)) : Promise.resolve([]),
+    lookupTables(conn, ixs.addressLookupTableAddresses),
+  ]);
   let rentLamports = 0; const rentMints: string[] = [];
   const setup = setupAll.filter((t) => {
     if (!t.programId.equals(ATA_PROGRAM) || !t.keys[0]) return true;
@@ -99,7 +103,6 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
     rentLamports += ATA_RENT_LAMPORTS; rentMints.push(t.keys[3]?.pubkey.toBase58() ?? "");
     return true;
   });
-  const solUsdNow = await solUsd();
   const rentUsd = solUsdNow ? Math.ceil((rentLamports / 1e9) * solUsdNow * 100) / 100 : 0;
   const rentRaw = BigInt(Math.round(rentUsd * 1e6));
   const usdcMint = new PublicKey(USDC_MINT), feeWallet = new PublicKey(env.FEE_WALLET!);
@@ -113,7 +116,6 @@ export async function buildTx(env: Env, sql: Sql, q: QuoteInput, defaults: { sli
     ...(side === "buy" ? feeIx : []), fromJup(ixs.swapInstruction), ...(ixs.cleanupInstruction ? [fromJup(ixs.cleanupInstruction)] : []),
     ...(side === "sell" ? feeIx : []), ...(ixs.otherInstructions ?? []).map(fromJup),
   ];
-  const alts = await lookupTables(conn, ixs.addressLookupTableAddresses);
   const { tx, lastValidBlockHeight } = await buildV0(conn, gas.publicKey, all, alts);
   const msgBytes = tx.message.serialize();
   const msgHash = await sha256hex(msgBytes);
