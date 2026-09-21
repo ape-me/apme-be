@@ -12,6 +12,9 @@ ENV = "dev"
 ALLOWED_ORIGINS = "https://apeme.fun,https://www.apeme.fun,http://localhost:5173"
 SITE_URL = "https://apeme.fun"
 PUBLIC_URL = "https://apme-be.iamjoey.workers.dev"
+PRIVY_APP_ID = "cmubdpllu01d00cl2p2q2n6h6"
+INVITE_GATE = "1"
+INVITES_PER_USER = "5"
 
 # Hyperdrive to the VPS Postgres (read-only user). Created with:
 #   wrangler hyperdrive create apme-pg --connection-string="postgres://apeme_ro:...@<tunnel-host>:5432/apeme"

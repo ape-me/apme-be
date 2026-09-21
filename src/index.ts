@@ -8,13 +8,14 @@ import { read } from "./routes/read";
 import { ingest } from "./routes/ingest";
 import { ws } from "./routes/ws";
 import { admin } from "./routes/admin";
+import { me } from "./routes/me";
 import { apelistRoute } from "./routes/apelist";
 
 export { Room } from "./do/room";
 
 const app = new Hono<{ Bindings: Env; Variables: DbVars }>();
 
-app.use("*", async (c, next) => c.req.path.startsWith("/api/apelist") ? next() : cors({ origin: "*", allowMethods: ["GET", "POST"], maxAge: 86400 })(c, next));
+app.use("*", async (c, next) => c.req.path.startsWith("/api/apelist") ? next() : cors({ origin: "*", allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE"], allowHeaders: ["content-type", "privy-id-token", "authorization"], maxAge: 86400 })(c, next));
 app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "no-referrer");
@@ -59,6 +60,7 @@ app.route("/v1", read);
 app.route("/api", read);   // alias, same handlers
 app.route("/ingest", ingest);
 app.route("/v1/admin", admin);
+app.route("/v1/me", me);
 app.route("/ws", ws);
 
 app.notFound((c) => c.json({ error: "not found", requestId: c.req.header("cf-ray") ?? "" }, 404));

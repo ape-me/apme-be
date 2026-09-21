@@ -5,6 +5,8 @@ import { withDb, type DbVars } from "../lib/db";
 import { badRequest, unauthorized } from "../lib/errors";
 import { Mint } from "../contract";
 import { COLLECTION_IDS, pgArr } from "../services/collections";
+import { mintAdminCodes } from "../services/account";
+import { accountRepo } from "../repos/account";
 
 // Operator overrides for the stock list. Writes stock_config (the indexer re-reads it every 10 min and
 // resubscribes) and mirrors excluded/category/tags onto stocks so the API reflects the change at once.
@@ -42,4 +44,13 @@ admin.post("/stocks/:mint", async (c) => {
             ON CONFLICT (mint) DO UPDATE SET excluded = ${next.excluded}, category = ${next.category}, tags = COALESCE(string_to_array(NULLIF(${csv}, ''), ','), '{}'), note = ${next.note}, updated_at = ${now}`;
   const [row] = await sql`UPDATE stocks SET excluded = ${next.excluded}, tags = COALESCE(string_to_array(NULLIF(${csv}, ''), ','), '{}'), category = COALESCE(${next.category}, category) WHERE mint = ${mint.data} RETURNING mint, symbol, category, excluded, tags`;
   return c.json({ ok: true, config: { mint: mint.data, ...next }, stock: row ?? null, note: "indexer applies subscription changes within 10 min" });
+});
+
+// Invite codes you mint by hand: batches with a label, max uses, optional expiry. Each user also has a personal code.
+admin.get("/invites", async (c) => c.json({ invites: await accountRepo.listInvites(c.get("sql")) }));
+admin.post("/invites", async (c) => {
+  const b = z.object({ count: z.number().int().min(1).max(200).default(1), maxUses: z.number().int().min(1).max(10000).default(1), label: z.string().max(60).optional(), expiresAt: z.number().int().nullable().optional() }).safeParse(await c.req.json());
+  if (!b.success) throw badRequest(b.error.issues.map((i) => i.message).join("; "));
+  const codes = await mintAdminCodes(c.get("sql"), b.data.count, b.data.maxUses, b.data.label ?? null, b.data.expiresAt ?? null);
+  return c.json({ codes, maxUses: b.data.maxUses, label: b.data.label ?? null });
 });
