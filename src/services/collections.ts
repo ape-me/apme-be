@@ -14,9 +14,12 @@ export const COLLECTIONS: readonly { id: string; title: string; tagline: string;
 ];
 
 export const COLLECTION_IDS = COLLECTIONS.map((c) => c.id);
+// text[] comes back from Hyperdrive as its literal ("{ai,mag7}"), so parse defensively.
+export const pgArr = (v: unknown): string[] => Array.isArray(v) ? v.map(String) : typeof v === "string" ? v.replace(/^\{|\}$/g, "").split(",").map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean) : [];
+
 // Operator tags from stock_config add a stock to a collection without a deploy.
 const inCollection = (c: (typeof COLLECTIONS)[number], r: StockRow) =>
-  (r.tags ?? []).includes(c.id) || (c.issuer ? r.issuer === c.issuer : c.category ? r.category === c.category : (c.symbols ?? []).includes(r.symbol));
+  pgArr(r.tags).includes(c.id) || (c.issuer ? r.issuer === c.issuer : c.category ? r.category === c.category : (c.symbols ?? []).includes(r.symbol));
 // Every collection a stock belongs to; goes out as `tags` so the app can filter without another call.
 export const tagsFor = (r: StockRow) => COLLECTIONS.filter((c) => inCollection(c, r)).map((c) => c.id);
 export const filterCollection = (rows: StockRow[], id: string) => { const c = COLLECTIONS.find((x) => x.id === id); return c ? rows.filter((r) => inCollection(c, r)) : []; };

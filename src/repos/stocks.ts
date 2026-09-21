@@ -2,7 +2,7 @@ import type { Sql } from "../lib/db";
 
 export type StockRow = {
   mint: string; symbol: string; name: string; issuer: string; category: string; decimals: number;
-  logo: string | null; price_usd: number | null; change_24h: number | null; memes?: number; multiplier: number; tags: string[];
+  logo: string | null; price_usd: number | null; change_24h: number | null; memes?: number; multiplier: number; tags: string[] | string;
   mark_usd: number | null; premium_pct: number | null; liquidity_usd: number | null;
   vol_24h_usd: number | null; buys_24h: number | null; sells_24h: number | null;
   heat: number; launched_24h: number; meme_vol_24h: number; wallets_24h: number;
