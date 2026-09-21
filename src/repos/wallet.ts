@@ -10,7 +10,22 @@ export type ActivityRow = {
   quote_decimals: number; stock_price_usd: number | null;
 };
 
+export type SwapPositionRow = { mint: string; bought_raw: string; sold_raw: string; bought_usd: number; sold_usd: number };
+export type SwapActivityRow = {
+  id: string; signature: string | null; side: "buy" | "sell"; status: string; error: string | null; created_at: string; confirmed_at: string | null;
+  input_mint: string; output_mint: string; in_raw: string; out_raw: string | null; in_usd: number | null; out_usd: number | null; fee_usd: number | null; symbol: string | null;
+};
+
 export const walletRepo = {
+  // Our own swaps (USDC ↔ token) grouped per token: what this wallet paid in USD and got in raw units, and vice versa.
+  swapPositions: (sql: Sql, wallet: string) => sql<SwapPositionRow[]>`
+    SELECT mint, coalesce(sum(b_raw),0)::text AS bought_raw, coalesce(sum(s_raw),0)::text AS sold_raw, coalesce(sum(b_usd),0) AS bought_usd, coalesce(sum(s_usd),0) AS sold_usd FROM (
+      SELECT output_mint AS mint, out_raw AS b_raw, 0 AS s_raw, in_usd AS b_usd, 0 AS s_usd FROM swaps WHERE wallet = ${wallet} AND status = 'confirmed' AND side = 'buy'
+      UNION ALL
+      SELECT input_mint, 0, in_raw, 0, out_usd FROM swaps WHERE wallet = ${wallet} AND status = 'confirmed' AND side = 'sell') x GROUP BY mint`,
+  swapActivity: (sql: Sql, wallet: string, limit: number) => sql<SwapActivityRow[]>`
+    SELECT id, signature, side, status, error, created_at, confirmed_at, input_mint, output_mint, in_raw::text AS in_raw, out_raw::text AS out_raw, in_usd, out_usd, fee_usd, symbol
+    FROM swaps WHERE wallet = ${wallet} AND status <> 'quoted' ORDER BY created_at DESC LIMIT ${limit}`,
   positions: (sql: Sql, wallet: string) => sql<PositionRow[]>`
     SELECT token_mint,
            sum(base_raw) FILTER (WHERE side = 'buy')::text AS bought_raw, sum(base_raw) FILTER (WHERE side = 'sell')::text AS sold_raw,

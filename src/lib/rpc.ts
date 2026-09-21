@@ -31,3 +31,34 @@ export async function solPrice(): Promise<number | null> {
   const j = (await r.json()) as Record<string, { usdPrice?: number }>;
   return j[SOL_MINT]?.usdPrice ?? null;
 }
+
+export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+export type Deposit = { sig: string; ts: number; amount: number; from: string | null; mint: string; direction: "in" | "out" };
+
+// Last few USDC transfers touching the wallet's USDC account, from the chain. One signatures call + one batched
+// getTransaction. Used for the "Received $20 USDC" rows; our own swaps are excluded by signature upstream.
+export async function usdcTransfers(env: Env, owner: string, usdcAta: string, limit = 8): Promise<Deposit[]> {
+  const sigs = (await call(env, "getSignaturesForAddress", [usdcAta, { limit }])) as { signature: string; blockTime: number | null; err: unknown }[];
+  const ok = sigs.filter((s) => !s.err);
+  if (!ok.length) return [];
+  const body = ok.map((s, i) => ({ jsonrpc: "2.0", id: i, method: "getTransaction", params: [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" }] }));
+  const r = await fetch(env.RPC_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const txs = (await r.json()) as { id: number; result: { blockTime: number; transaction: { message: { instructions: unknown[] } }; meta: { innerInstructions?: { instructions: unknown[] }[] } } | null }[];
+  const out: Deposit[] = [];
+  for (const t of txs) {
+    if (!t.result) continue;
+    const sig = ok[t.id]!.signature;
+    const ixs = [...t.result.transaction.message.instructions, ...(t.result.meta.innerInstructions ?? []).flatMap((x) => x.instructions)] as { program?: string; parsed?: { type: string; info: Record<string, string> } }[];
+    let net = 0; let from: string | null = null;
+    for (const ix of ixs) {
+      if (ix.program !== "spl-token" || !ix.parsed || !/^transfer(Checked)?$/.test(ix.parsed.type)) continue;
+      const info = ix.parsed.info; const amt = Number(info.tokenAmount ? (info.tokenAmount as unknown as { amount: string }).amount : info.amount) / 1e6;
+      if (info.destination === usdcAta) { net += amt; from = info.authority ?? info.source ?? from; }
+      else if (info.source === usdcAta) net -= amt;
+    }
+    if (Math.abs(net) < 0.000001) continue;
+    out.push({ sig, ts: t.result.blockTime, amount: Math.abs(net), from: net > 0 ? from : null, mint: USDC_MINT, direction: net > 0 ? "in" : "out" });
+  }
+  return out;
+}

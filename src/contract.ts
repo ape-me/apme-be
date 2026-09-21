@@ -66,17 +66,20 @@ export const CollectionsResponse = z.object({ collections: z.array(Collection), 
 // Portfolio. Holdings come from the chain; cost basis and P&L from our own trade tape, so they exist only for
 // tokens this wallet traded on floors we index (null otherwise). Values in USD at current prices.
 export const Holding = z.object({
-  mint: z.string(), kind: z.enum(["sol", "stock", "meme"]), symbol: z.string().nullable(), name: z.string().nullable(), image: z.string().nullable(),
-  quoteSymbol: z.string().nullable(), amount: z.number(), priceUsd: z.number().nullable(), valueUsd: z.number().nullable(), change24h: z.number().nullable(),
+  mint: z.string(), kind: z.enum(["sol", "cash", "stock", "meme"]), symbol: z.string().nullable(), name: z.string().nullable(), image: z.string().nullable(),
+  quoteSymbol: z.string().nullable(), amount: z.number(), raw: z.string(), decimals: z.number().int(), priceUsd: z.number().nullable(), valueUsd: z.number().nullable(), change24h: z.number().nullable(),
   costUsd: z.number().nullable(), pnlUsd: z.number().nullable(), pnlPct: z.number().nullable(),
 });
+// Activity rows come from three places: our own swaps (status can be pending/failed), USDC deposits/withdrawals seen
+// on chain, and meme trades from the indexer. `side` is kept for trades; `type` is the field to switch on.
 export const Activity = z.object({
-  sig: z.string(), ts: z.number().int(), side: z.enum(["buy", "sell"]), mint: Mint, symbol: z.string().nullable(), image: z.string().nullable(),
-  stockSymbol: z.string(), amount: z.number(), quote: z.number(), usd: z.number().nullable(),
+  sig: z.string().nullable(), ts: z.number().int(), type: z.enum(["buy", "sell", "deposit", "withdraw"]), status: z.enum(["pending", "confirmed", "failed"]),
+  source: z.enum(["apeme", "chain"]), side: z.enum(["buy", "sell"]).nullable(), mint: z.string(), symbol: z.string().nullable(), image: z.string().nullable(),
+  stockSymbol: z.string().nullable(), amount: z.number(), quote: z.number().nullable(), usd: z.number().nullable(), feeUsd: z.number().nullable(), from: z.string().nullable(), error: z.string().nullable(),
 });
 export const WalletResponse = z.object({
-  address: z.string(), totalUsd: z.number(), solUsd: z.number(), stocksUsd: z.number(), memesUsd: z.number(),
-  costUsd: z.number(), pnlUsd: z.number(), realizedUsd: z.number(),
+  address: z.string(), totalUsd: z.number(), cashUsd: z.number(), solUsd: z.number(), stocksUsd: z.number(), memesUsd: z.number(),
+  costUsd: z.number(), pnlUsd: z.number(), realizedUsd: z.number(), pendingSwaps: z.number().int(),
   holdings: z.array(Holding), activity: z.array(Activity), asOf: z.number().int(),
 });
 export const MoversResponse = z.object({ gainers: z.array(Stock), losers: z.array(Stock), mostTraded: z.array(Stock), asOf: z.number().int() });
