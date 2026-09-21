@@ -1,63 +1,38 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import { withDb, type DbVars } from "../lib/db";
-import { badRequest, unauthorized } from "../lib/errors";
+import { withDb, type DbVars } from "../middleware/db";
+import { requireAdmin } from "../middleware/auth";
+import { parse } from "../lib/validate";
 import { Mint } from "../contract";
-import { COLLECTION_IDS, pgArr } from "../services/collections";
+import { COLLECTION_IDS } from "../services/collections";
+import { patchStock } from "../services/admin";
 import { mintAdminCodes } from "../services/account";
 import { accountRepo } from "../repos/account";
+import { stocksRepo } from "../repos/stocks";
 import { gasInfo, simulate } from "../services/swap";
 
-// Operator overrides: write stock_config (indexer re-reads every 10 min) and mirror onto stocks immediately.
 const Patch = z.object({
   excluded: z.boolean().optional(),
   category: z.enum(["preipo", "stock", "etf", "crypto"]).nullable().optional(),
   tags: z.array(z.enum(COLLECTION_IDS as [string, ...string[]])).optional(),
   note: z.string().max(200).nullable().optional(),
 });
+const InviteBody = z.object({ count: z.number().int().min(1).max(200).default(1), maxUses: z.number().int().min(1).max(10000).default(1), label: z.string().max(60).optional(), expiresAt: z.number().int().nullable().optional() });
+const SimBody = z.object({ inputMint: z.string(), outputMint: z.string(), amount: z.string().regex(/^\d+$/), taker: Mint });
 
 export const admin = new Hono<{ Bindings: Env; Variables: DbVars }>();
-admin.use("*", async (c, next) => {
-  const t = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!c.env.ADMIN_TOKEN || t !== c.env.ADMIN_TOKEN) throw unauthorized();
-  await next();
-});
-admin.use("*", withDb);
+admin.use("*", requireAdmin, withDb);
 
-admin.get("/stocks", async (c) => {
-  const sql = c.get("sql");
-  const rows = await sql`SELECT s.mint, s.symbol, s.issuer, s.category, s.excluded, s.tags, c.note, c.updated_at
-                         FROM stocks s LEFT JOIN stock_config c ON c.mint = s.mint ORDER BY s.excluded DESC, s.symbol`;
-  return c.json({ stocks: rows });
-});
+admin.get("/stocks", async (c) => c.json({ stocks: await stocksRepo.withConfig(c.get("sql")) }));
+admin.post("/stocks/:mint", async (c) => c.json(await patchStock(c.get("sql"), parse(Mint, c.req.param("mint")), parse(Patch, await c.req.json().catch(() => ({}))))));
 
-admin.post("/stocks/:mint", async (c) => {
-  const mint = Mint.safeParse(c.req.param("mint")); if (!mint.success) throw badRequest("bad mint");
-  const p = Patch.safeParse(await c.req.json().catch(() => ({}))); if (!p.success) throw badRequest(p.error.issues.map((i) => i.message).join("; "));
-  const sql = c.get("sql"); const now = Math.floor(Date.now() / 1000); const b = p.data;
-  // Array params 500 through Hyperdrive (same as the issuer filter), so tags travel as a csv scalar and are split in SQL.
-  const [cur] = await sql`SELECT excluded, category, tags, note FROM stock_config WHERE mint = ${mint.data}`;
-  const next = { excluded: b.excluded ?? cur?.excluded ?? false, category: b.category === undefined ? cur?.category ?? null : b.category, tags: b.tags ?? pgArr(cur?.tags), note: b.note === undefined ? cur?.note ?? null : b.note };
-  const csv = next.tags.join(",");
-  await sql`INSERT INTO stock_config (mint, excluded, category, tags, note, updated_at) VALUES (${mint.data}, ${next.excluded}, ${next.category}, COALESCE(string_to_array(NULLIF(${csv}, ''), ','), '{}'), ${next.note}, ${now})
-            ON CONFLICT (mint) DO UPDATE SET excluded = ${next.excluded}, category = ${next.category}, tags = COALESCE(string_to_array(NULLIF(${csv}, ''), ','), '{}'), note = ${next.note}, updated_at = ${now}`;
-  const [row] = await sql`UPDATE stocks SET excluded = ${next.excluded}, tags = COALESCE(string_to_array(NULLIF(${csv}, ''), ','), '{}'), category = COALESCE(${next.category}, category) WHERE mint = ${mint.data} RETURNING mint, symbol, category, excluded, tags`;
-  return c.json({ ok: true, config: { mint: mint.data, ...next }, stock: row ?? null, note: "indexer applies subscription changes within 10 min" });
-});
-
-// Invite codes you mint by hand: batches with a label, max uses, optional expiry. Each user also has a personal code.
 admin.get("/invites", async (c) => c.json({ invites: await accountRepo.listInvites(c.get("sql")) }));
 admin.post("/invites", async (c) => {
-  const b = z.object({ count: z.number().int().min(1).max(200).default(1), maxUses: z.number().int().min(1).max(10000).default(1), label: z.string().max(60).optional(), expiresAt: z.number().int().nullable().optional() }).safeParse(await c.req.json());
-  if (!b.success) throw badRequest(b.error.issues.map((i) => i.message).join("; "));
-  const codes = await mintAdminCodes(c.get("sql"), b.data.count, b.data.maxUses, b.data.label ?? null, b.data.expiresAt ?? null);
-  return c.json({ codes, maxUses: b.data.maxUses, label: b.data.label ?? null });
+  const b = parse(InviteBody, await c.req.json());
+  const codes = await mintAdminCodes(c.get("sql"), b.count, b.maxUses, b.label ?? null, b.expiresAt ?? null);
+  return c.json({ codes, maxUses: b.maxUses, label: b.label ?? null });
 });
 
 admin.get("/gas", async (c) => c.json(await gasInfo(c.env)));
-admin.post("/swap-simulate", async (c) => {
-  const b = z.object({ inputMint: z.string(), outputMint: z.string(), amount: z.string().regex(/^\d+$/), taker: Mint }).safeParse(await c.req.json());
-  if (!b.success) throw badRequest(b.error.issues.map((i) => i.message).join("; "));
-  return c.json(await simulate(c.env, c.get("sql"), b.data));
-});
+admin.post("/swap-simulate", async (c) => c.json(await simulate(c.env, c.get("sql"), parse(SimBody, await c.req.json()))));

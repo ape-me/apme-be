@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../env";
-import { HttpError } from "./errors";
+import { HttpError } from "../lib/errors";
 
 // Per-IP limit via the Workers rate-limit binding. Absent binding (local dev) means no limit.
 export const rateLimited: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {

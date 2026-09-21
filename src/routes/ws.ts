@@ -4,7 +4,7 @@ import type { Env } from "../env";
 import { Mint } from "../contract";
 import { badRequest } from "../lib/errors";
 import { rooms, FLOOR } from "../services/rooms";
-import { rateLimited } from "../lib/ratelimit";
+import { rateLimited } from "../middleware/ratelimit";
 
 export const ws = new Hono<{ Bindings: Env }>();
 

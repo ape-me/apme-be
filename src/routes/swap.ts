@@ -1,17 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import { withDb } from "../lib/db";
-import { badRequest } from "../lib/errors";
+import { withDb } from "../middleware/db";
+import { requireAuth, requireActive, type AuthVars } from "../middleware/auth";
+import { parse } from "../lib/validate";
 import { Mint } from "../contract";
-import { requireAuth, requireActive, type AuthVars } from "./me";
 import { quote, submit, txStatus } from "../services/swap";
-
-const parse = <T>(schema: z.ZodType<T>, v: unknown): T => {
-  const r = schema.safeParse(v);
-  if (!r.success) throw badRequest(r.error.issues.map((i) => `${i.path.join(".") || "value"}: ${i.message}`).join("; "));
-  return r.data;
-};
 
 const MintOrAlias = z.union([Mint, z.enum(["usdc", "native"])]);
 const QuoteBody = z.object({

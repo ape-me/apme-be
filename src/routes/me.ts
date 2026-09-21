@@ -1,40 +1,14 @@
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import { withDb, type DbVars } from "../lib/db";
-import { HttpError, badRequest, notFound, unauthorized } from "../lib/errors";
-import { verifyIdToken, fetchUserAccounts, type PrivyUser } from "../lib/privy";
+import { withDb } from "../middleware/db";
+import { requireAuth, type AuthVars } from "../middleware/auth";
+import { parse } from "../lib/validate";
+import { notFound } from "../lib/errors";
 import { Mint } from "../contract";
-import { ensureUser, redeemInvite, referrals, claimReferrals, updateProfile, updateSettings, shapeSettings, shapeWallet, type UserRow, type WalletRow, type SettingsRow } from "../services/account";
+import { redeemInvite, referrals, claimReferrals, updateProfile, updateSettings, shapeSettings, shapeWallet, type UserRow, type WalletRow, type SettingsRow } from "../services/account";
 import { accountRepo } from "../repos/account";
 import { catalog } from "../services/catalog";
-
-export type AuthVars = DbVars & { privy: PrivyUser; user: UserRow; wallets: WalletRow[]; settings: SettingsRow };
-
-const parse = <T>(schema: z.ZodType<T>, v: unknown): T => {
-  const r = schema.safeParse(v);
-  if (!r.success) throw badRequest(r.error.issues.map((i) => `${i.path.join(".") || "value"}: ${i.message}`).join("; "));
-  return r.data;
-};
-
-// Every /v1/me and trade route: verify the Privy identity token, load (or create) the user.
-export const requireAuth: MiddlewareHandler<{ Bindings: Env; Variables: AuthVars }> = async (c, next) => {
-  if (!c.env.PRIVY_APP_ID) throw new HttpError(503, "auth_not_configured");
-  // Identity token preferred (carries the wallets); Privy access token accepted as a fallback (same signer, no wallets).
-  const token = c.req.header("privy-id-token")?.trim() || c.req.header("authorization")?.replace(/^Bearer\s+/i, "").trim();
-  if (!token) throw unauthorized();
-  const privy = await verifyIdToken(c.env, token);
-  if (!privy.wallets.length) { const acc = await fetchUserAccounts(c.env, privy.id); if (acc) { privy.wallets = acc.wallets; privy.email ??= acc.email; } }
-  const { user, wallets, settings } = await ensureUser(c.get("sql"), privy, Number(c.env.INVITES_PER_USER ?? 5));
-  c.set("privy", privy); c.set("user", user); c.set("wallets", wallets); c.set("settings", settings);
-  await next();
-};
-
-// Trading and other gated actions need a redeemed invite while the gate is on.
-export const requireActive: MiddlewareHandler<{ Bindings: Env; Variables: AuthVars }> = async (c, next) => {
-  if (c.env.INVITE_GATE !== "0" && !c.get("user").activated_at) throw new HttpError(403, "invite_required");
-  await next();
-};
 
 const shapeMe = (c: { env: Env }, user: UserRow, wallets: WalletRow[], settings: SettingsRow, referral: { code: string; invitesLeft: number; earnedUsd: number }) => ({
   userId: user.id, handle: user.handle, avatarUrl: user.avatar_url,

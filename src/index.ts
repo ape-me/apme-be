@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./env";
 import { HttpError } from "./lib/errors";
-import { withDb, type DbVars } from "./lib/db";
+import { withDb, type DbVars } from "./middleware/db";
 import { marketRepo } from "./repos/market";
 import { read } from "./routes/read";
 import { ingest } from "./routes/ingest";

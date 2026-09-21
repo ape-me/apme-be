@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
-import { withDb, type DbVars } from "../lib/db";
-import { rateLimited } from "../lib/ratelimit";
+import { withDb, type DbVars } from "../middleware/db";
+import { rateLimited } from "../middleware/ratelimit";
 import { cached } from "../lib/cache";
 import { badRequest } from "../lib/errors";
 import { Mint, Timeframe, Sort, Column, Limit, Cursor, TokenFilters, Issuer, HistoryRange } from "../contract";
