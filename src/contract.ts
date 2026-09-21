@@ -54,7 +54,7 @@ export const Stock = z.object({
 export const Issuer = z.enum(["xstocks", "backpack", "prestocks"]);
 
 // Stock price line for the Invest-mode chart. One point per bucket, oldest → newest; `mark` is the fair value if known.
-export const HistoryRange = z.enum(["1h", "1d", "1w", "1m"]);
+export const HistoryRange = z.enum(["5m", "15m", "1h", "1d", "1w", "1m"]);
 export const HistoryPoint = z.object({ t: z.number().int(), price: z.number(), mark: z.number().nullable() });
 export const HistoryResponse = z.object({
   mint: Mint, range: HistoryRange, from: z.number().int(), to: z.number().int(),
@@ -127,7 +127,9 @@ export const IngestToken = z.object({
   event: z.enum(["created", "graduated"]), mint: Mint, symbol: z.string().nullable(), name: z.string().nullable(), quoteMint: Mint,
   launchpad: z.string(), creator: z.string().nullable(), createdAt: z.number().int(), ts: z.number().int(),
 });
-export const IngestBatch = z.object({ trades: z.array(IngestTrade).max(2000), tokens: z.array(IngestToken).max(200).default([]), sentAt: z.number().int() });
+// Stock price tick (Jupiter, every 5s, only when it moved). markUsd/change24h are the stock's last rollup values.
+export const IngestPrice = z.object({ mint: Mint, ts: z.number().int(), priceUsd: z.number(), markUsd: z.number().nullable(), change24h: z.number().nullable() });
+export const IngestBatch = z.object({ trades: z.array(IngestTrade).max(2000), tokens: z.array(IngestToken).max(200).default([]), prices: z.array(IngestPrice).max(500).default([]), sentAt: z.number().int() });
 export type IngestBatch = z.infer<typeof IngestBatch>;
 
 // Worker → phone over WebSocket.
@@ -135,7 +137,9 @@ export const WsTrade = z.object({ t: z.literal("trade"), mint: Mint }).merge(Tra
 // A token was created (curve pool initialised) or graduated (AMM pool appeared). Fetch /v1/tokens/:mint for the full card.
 export const WsNewToken = z.object({ t: z.literal("token") }).merge(IngestToken);
 export const WsStats = z.object({ t: z.literal("stats"), asOf: z.number().int(), tokens: z.array(TokenCard.pick({ mint: true, priceUsd: true, mcapUsd: true, vol24hUsd: true, change24h: true, buys24h: true, sells24h: true, lastTradeAt: true })) });
-export const WsMessage = z.discriminatedUnion("t", [WsTrade, WsNewToken, WsStats]);
+// Live stock price on ws/stock:<mint>. Drives the hero price and the chart's last point without polling.
+export const WsPrice = z.object({ t: z.literal("price") }).merge(IngestPrice);
+export const WsMessage = z.discriminatedUnion("t", [WsTrade, WsNewToken, WsStats, WsPrice]);
 export type WsMessage = z.infer<typeof WsMessage>;
 
 export const TickerToken = z.object({

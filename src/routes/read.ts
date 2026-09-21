@@ -41,11 +41,13 @@ read.get("/movers", (c) => cached(c.req.raw, 10, async () => {
   return c.json(await catalog.movers(c.get("sql"), q.limit));
 }));
 
-read.get("/stocks/:mint/history", (c) => cached(c.req.raw, 30, async () => {
+read.get("/stocks/:mint/history", (c) => {
   const mint = parse(Mint, c.req.param("mint"));
   const q = parse(z.object({ range: HistoryRange.default("1d") }), c.req.query());
+  return cached(c.req.raw, q.range === "5m" || q.range === "15m" ? 2 : 30, async () => {
   return c.json(await market.history(c.get("sql"), mint, q.range));
-}));
+  });
+});
 
 // Portfolio tab. Address = the user's Privy wallet. Chain read + our tape, so 5s cache is plenty.
 read.get("/wallet/:address", (c) => cached(c.req.raw, 5, async () => {
