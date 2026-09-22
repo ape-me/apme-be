@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { walletRepo } from "../repos/wallet";
 import { balances, solPrice, usdcTransfers, SOL_MINT, USDC_MINT } from "../lib/rpc";
 import { ata } from "../lib/solana";
+import { txStatus } from "./swap";
 import { PublicKey } from "@solana/web3.js";
 import type { WalletResponse, Activity } from "../contract";
 import type { z } from "zod";
@@ -34,7 +35,22 @@ export async function wallet(
       walletRepo.swapActivity(sql, address, activityLimit),
       usdcTransfers(env, usdcAta).catch(() => []),
     ]);
-  const mints = tokens.map((t) => t.mint).filter((m) => m !== USDC_MINT);
+  // Rows still "submitted" only flip when /v1/tx is polled; settle them here so pendingSwaps is honest.
+  const settled = await Promise.all(
+    swapRows
+      .filter((r) => r.status === "submitted" && r.signature)
+      .map((r) => txStatus(env, sql, r.signature!).catch(() => null)),
+  );
+  for (const r of swapRows) {
+    const st = settled.find((x) => x?.signature === r.signature);
+    if (st && st.status !== "pending") r.status = st.status;
+  }
+  const mints = [
+    ...new Set([
+      ...tokens.map((t) => t.mint),
+      ...swapRows.map((r) => (r.side === "buy" ? r.output_mint : r.input_mint)),
+    ]),
+  ].filter((m) => m !== USDC_MINT);
   const known = mints.length ? await walletRepo.known(sql, mints) : [];
   const meta = new Map(known.map((k) => [k.mint, k]));
 
