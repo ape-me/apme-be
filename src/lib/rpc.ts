@@ -23,7 +23,7 @@ export async function balances(env: Env, owner: string): Promise<{ sol: number; 
     call(env, "getTokenAccountsByOwner", [
       owner,
       { programId: program },
-      { encoding: "jsonParsed" },
+      { encoding: "jsonParsed", commitment: "confirmed" },
     ]) as Promise<{
       value: {
         account: {
@@ -39,7 +39,7 @@ export async function balances(env: Env, owner: string): Promise<{ sol: number; 
       }[];
     }>;
   const [lamports, a, b] = await Promise.all([
-    call(env, "getBalance", [owner]) as Promise<{ value: number }>,
+    call(env, "getBalance", [owner, { commitment: "confirmed" }]) as Promise<{ value: number }>,
     parsed(TOKEN),
     parsed(TOKEN_2022),
   ]);
