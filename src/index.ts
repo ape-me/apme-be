@@ -3,8 +3,6 @@ import { cors } from "hono/cors";
 import type { Env } from "./env";
 import { HttpError } from "./lib/errors";
 import { withDb, type DbVars } from "./middleware/db";
-import { openDb } from "./lib/db";
-import { ingestNews } from "./services/news";
 import { marketRepo } from "./repos/market";
 import { read } from "./routes/read";
 import { ingest } from "./routes/ingest";
@@ -109,18 +107,4 @@ app.onError((e, c) => {
   return c.json({ error: "internal", requestId: c.req.header("cf-ray") ?? "" }, 500);
 });
 
-// Cron: news every 5 minutes.
-export default {
-  fetch: app.fetch,
-  async scheduled(ev: ScheduledController, env: Env, ctx: ExecutionContext) {
-    const url = env.PG?.connectionString ?? env.DATABASE_URL;
-    if (!url) return;
-    const sql = openDb(url);
-    ctx.waitUntil(
-      ingestNews(env, sql, new Date(ev.scheduledTime).getUTCMinutes())
-        .then((r) => console.warn("news", JSON.stringify(r)))
-        .catch((e) => console.error("news", (e as Error).message))
-        .finally(() => sql.end({ timeout: 1 })),
-    );
-  },
-};
+export default app;

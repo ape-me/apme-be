@@ -311,9 +311,18 @@ export const IngestPrice = z.object({
   markUsd: z.number().nullable(),
   change24h: z.number().nullable(),
 });
+export const IngestNews = z.object({
+  mint: Mint,
+  symbol: z.string(),
+  title: z.string(),
+  source: z.string().nullable(),
+  url: z.string(),
+  publishedAt: z.number().int(),
+});
 export const IngestBatch = z.object({
   trades: z.array(IngestTrade).max(2000),
   tokens: z.array(IngestToken).max(200).default([]),
+  news: z.array(IngestNews).max(200).default([]),
   prices: z.array(IngestPrice).max(500).default([]),
   sentAt: z.number().int(),
 });

@@ -1,9 +1,10 @@
 import type { Env } from "../env";
 import type { Sql } from "../lib/db";
 import { newsRepo, type NewsRow } from "../repos/news";
-import { rooms, STOCK } from "./rooms";
+import { sign } from "../lib/hmac";
+import type { IngestNews } from "../contract";
+import type { z } from "zod";
 import { sha256hex } from "../lib/solana";
-import type { WsMessage } from "../contract";
 
 const UA = "Mozilla/5.0 (compatible; ApeMe/1.0)";
 const JUNK =
@@ -132,50 +133,67 @@ const outlet = (url: string, source: string | null) => {
         .replace(/^\w/, (c) => c.toUpperCase());
 };
 
-// Jev via Cloudflare AI Gateway: four typed questions, no generation. Skipped until the gateway token exists.
-// Jev via the Workers AI binding: four typed questions, no text generation. Null means "not scored", never a guess.
-type JevAnswers = Record<string, { noul?: number; score?: number; choice?: string; confidence?: number }>;
-async function score(env: Env, a: { title: string; summary: string | null; name: string; symbol: string }) {
-  if (!env.AI) return null;
-  const out = (await env.AI.run(
-    "typesafe/jev",
-    {
-      state: `Stock: ${a.name} (${a.symbol}). Headline: ${a.title}. Summary: ${a.summary ?? ""}`,
-      questions: {
-        about: {
-          type: "noul",
-          instructions:
-            "Is this article primarily about the named company rather than mentioning it in passing?",
-        },
-        impact: {
-          type: "score",
-          instructions: "How much could this news move the stock price over the next few days?",
-          criteria: [
-            "No effect: filler, listicle, opinion",
-            "Minor: routine coverage",
-            "Material: guidance, deal, regulation, lawsuit",
-            "Major: earnings surprise, M&A, big policy change",
-            "Critical: fraud, bankruptcy, delisting",
-          ],
-        },
-        direction: {
-          type: "choice",
-          instructions: "Likely direction of the price effect",
-          criteria: {
-            bullish: "Positive for the stock",
-            bearish: "Negative for the stock",
-            neutral: "Unclear or mixed",
-          },
-        },
-        junk: {
-          type: "noul",
-          instructions:
-            "Is this a listicle, prediction piece or SEO filler rather than a report of a specific event?",
-        },
+// Four typed questions per article, no text generation.
+const jevInput = (a: { title: string; summary: string | null; name: string; symbol: string }) => ({
+  state: `Stock: ${a.name} (${a.symbol}). Headline: ${a.title}. Summary: ${a.summary ?? ""}`,
+  questions: {
+    about: {
+      type: "noul",
+      instructions: "Is this article primarily about the named company rather than mentioning it in passing?",
+    },
+    impact: {
+      type: "score",
+      instructions: "How much could this news move the stock price over the next few days?",
+      criteria: [
+        "No effect: filler, listicle, opinion",
+        "Minor: routine coverage",
+        "Material: guidance, deal, regulation, lawsuit",
+        "Major: earnings surprise, M&A, big policy change",
+        "Critical: fraud, bankruptcy, delisting",
+      ],
+    },
+    direction: {
+      type: "choice",
+      instructions: "Likely direction of the price effect",
+      criteria: {
+        bullish: "Positive for the stock",
+        bearish: "Negative for the stock",
+        neutral: "Unclear or mixed",
       },
     },
-    { gateway: { id: "default" } },
-  )) as { answers?: JevAnswers; result?: { answers?: JevAnswers } };
+    junk: {
+      type: "noul",
+      instructions:
+        "Is this a listicle, prediction piece or SEO filler rather than a report of a specific event?",
+    },
+  },
+});
+
+// Workers AI binding inside the Worker, the same model over REST from the box. Null means "not scored", never a guess.
+type JevAnswers = Record<string, { noul?: number; score?: number; choice?: string; confidence?: number }>;
+type JevOut = { answers?: JevAnswers; result?: { answers?: JevAnswers } };
+async function score(env: Env, a: { title: string; summary: string | null; name: string; symbol: string }) {
+  let out: JevOut | null = null;
+  if (env.AI) {
+    out = (await env.AI.run("typesafe/jev", jevInput(a), { gateway: { id: "default" } })) as JevOut;
+  } else if (env.AI_GATEWAY_URL && env.AI_GATEWAY_TOKEN && env.CF_API_TOKEN) {
+    const r = await fetch(env.AI_GATEWAY_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${env.CF_API_TOKEN}`,
+        "cf-aig-authorization": `Bearer ${env.AI_GATEWAY_TOKEN}`,
+        "cf-aig-gateway-id": "default",
+      },
+      body: JSON.stringify({ model: "typesafe/jev", input: jevInput(a) }),
+    });
+    if (!r.ok) {
+      console.warn("jev", r.status, (await r.text()).slice(0, 200));
+      return null;
+    }
+    out = ((await r.json()) as { result?: JevOut }).result ?? null;
+  }
+  if (!out) return null;
   const an = out.result?.answers ?? out.answers;
   if (!an) return null;
   const dir = an.direction;
@@ -187,6 +205,23 @@ async function score(env: Env, a: { title: string; summary: string | null; name:
     confidence: dir?.confidence ?? null,
     junk: (an.junk?.noul ?? 0) > 0.7,
   };
+}
+
+// The box has no Durable Object binding, so new items reach the WebSocket rooms through the signed ingest route.
+async function pushNews(env: Env, items: z.infer<typeof IngestNews>[]) {
+  if (!env.INGEST_URL || !env.INGEST_SECRET) return;
+  const body = JSON.stringify({
+    trades: [],
+    tokens: [],
+    prices: [],
+    news: items,
+    sentAt: Math.floor(Date.now() / 1000),
+  });
+  await fetch(`${env.INGEST_URL}/trades`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-signature": await sign(env.INGEST_SECRET, body) },
+    body,
+  }).catch(() => {});
 }
 
 // Diagnostics for the admin route: one Jev call, raw status and body.
@@ -237,7 +272,7 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
   const stocks = await newsRepo.stocksForNews(sql);
   const slice = stocks.filter((_, i) => i % 4 === Math.floor(minute / 5) % 4);
   const t = Math.floor(Date.now() / 1000);
-  const fresh = new Map<string, WsMessage[]>();
+  const fresh: z.infer<typeof IngestNews>[] = [];
   let added = 0;
   for (const s of slice) {
     const ticker = tickerOf(s);
@@ -267,25 +302,20 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
       await newsRepo.tag(sql, row.id, s.mint, 1);
       if (row.inserted) {
         added++;
-        fresh.set(STOCK(s.mint), [
-          ...(fresh.get(STOCK(s.mint)) ?? []),
-          {
-            t: "news",
-            mint: s.mint,
-            symbol: s.symbol,
-            title,
-            source: outlet(url, n.source),
-            url,
-            publishedAt: n.publishedAt,
-          } as WsMessage,
-        ]);
+        fresh.push({
+          mint: s.mint,
+          symbol: s.symbol,
+          title,
+          source: outlet(url, n.source),
+          url,
+          publishedAt: n.publishedAt,
+        });
       }
     }
-    // Rank named outlets first by nudging TIER1 rows: handled at read time via source order; nothing to do here.
   }
   const { scored } = await scoreNews(env, sql, 40);
   if (minute % 60 === 0) await newsRepo.prune(sql, t - 7 * 86400);
-  if (fresh.size) await rooms.publish(env, fresh);
+  if (fresh.length) await pushNews(env, fresh);
   return { stocks: slice.length, added, scored };
 }
 

@@ -2,6 +2,7 @@ export type Env = {
   ENV: string;
   PG?: Hyperdrive;
   DATABASE_URL?: string; // dev fallback when no Hyperdrive binding
+  INGEST_URL?: string;
   INGEST_SECRET: string;
   METRICS_TOKEN?: string; // bearer for /metrics (Prometheus on the ops box)
   RPC_URL: string;
