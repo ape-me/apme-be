@@ -126,8 +126,8 @@ export async function wallet(
   for (const t of tokens) {
     const m = meta.get(t.mint);
     if (!m) continue; // not a stock or a meme we index: hidden, not our business
-    // RPC's uiAmount ignores the scaled-UI multiplier (verified), so a stock's displayed amount is raw × multiplier.
-    const amount = m.kind === "stock" ? t.amount * Number(m.multiplier ?? 1) : t.amount;
+    // Displayed units from raw: RPC uiAmount is inconsistent about the scaled-UI multiplier, so never use it.
+    const amount = (Number(t.raw) / 10 ** t.decimals) * (m.kind === "stock" ? Number(m.multiplier ?? 1) : 1);
     const value = m.price_usd == null ? null : amount * m.price_usd;
     if (m.kind === "stock") stocksUsd += value ?? 0;
     else memesUsd += value ?? 0;
