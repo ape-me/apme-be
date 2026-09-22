@@ -302,6 +302,7 @@ export const IngestToken = z.object({
 // Stock price tick (Jupiter, every 5s, only when it moved). markUsd/change24h are the stock's last rollup values.
 export const IngestPrice = z.object({
   mint: Mint,
+  kind: z.enum(["stock", "meme"]).default("stock"),
   ts: z.number().int(),
   priceUsd: z.number(),
   markUsd: z.number().nullable(),

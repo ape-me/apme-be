@@ -32,7 +32,7 @@ ingest.post("/trades", async (c) => {
     push(tk.mint, msg);
     push(STOCK(tk.quoteMint), msg);
   }
-  for (const p of r.data.prices) push(STOCK(p.mint), { t: "price", ...p });
+  for (const p of r.data.prices) push(p.kind === "meme" ? p.mint : STOCK(p.mint), { t: "price", ...p });
   c.executionCtx.waitUntil(rooms.publish(c.env, byRoom));
   return c.json({
     ok: true,
