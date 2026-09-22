@@ -115,6 +115,17 @@ export async function insights(env: Env, sql: Sql, mint: string) {
           beta: num(m.beta),
         }
       : null,
+    // xStocks pay dividends by rebasing: the custodian reinvests and raises the on-chain multiplier, so the
+    // holder's balance grows. Other issuers have no such mechanism, so their yield number means nothing here.
+    dividends:
+      stock.issuer === "xstocks"
+        ? {
+            mechanism: "rebase" as const,
+            yieldPct: num(m.dividendYieldIndicatedAnnual),
+            multiplier: Number(stock.multiplier ?? 1),
+            growthSinceLaunchPct: Math.round((Number(stock.multiplier ?? 1) - 1) * 10000) / 100,
+          }
+        : { mechanism: null, yieldPct: null, multiplier: 1, growthSinceLaunchPct: 0 },
     company: profile
       ? {
           name: profile.name,
