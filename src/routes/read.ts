@@ -18,6 +18,7 @@ import {
 } from "../contract";
 import { catalog } from "../services/catalog";
 import { news } from "../services/news";
+import { insights } from "../services/insights";
 import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
 import { COLLECTION_IDS } from "../services/collections";
@@ -95,6 +96,11 @@ read.get("/news", (c) =>
 );
 read.get("/news/ticker", (c) =>
   cached(c.req.raw, 60, async () => c.json({ items: await news.ticker(c.get("sql"), 12) })),
+);
+read.get("/stocks/:mint/insights", (c) =>
+  cached(c.req.raw, 300, async () =>
+    c.json(await insights(c.env, c.get("sql"), parse(Mint, c.req.param("mint")))),
+  ),
 );
 read.get("/stocks/:mint/news", (c) =>
   cached(c.req.raw, 60, async () => {

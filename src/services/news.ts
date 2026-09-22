@@ -2,6 +2,7 @@ import type { Env } from "../env";
 import type { Sql } from "../lib/db";
 import { newsRepo, type NewsRow } from "../repos/news";
 import { sign } from "../lib/hmac";
+import { tickerOf } from "./insights";
 import type { IngestNews } from "../contract";
 import type { z } from "zod";
 import { sha256hex } from "../lib/solana";
@@ -30,15 +31,6 @@ const ymd = (x: Date) => x.toISOString().slice(0, 10);
 const xmlTag = (s: string, t: string) =>
   (s.match(new RegExp(`<${t}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${t}>`))?.[1] ?? "").trim();
 
-// NASDAQ ticker for a listed stock: xStocks are <TICKER>x, Backpack mostly plain, pre-IPO has none.
-const tickerOf = (s: { symbol: string; issuer: string }) =>
-  s.issuer === "prestocks"
-    ? null
-    : s.issuer === "xstocks"
-      ? s.symbol.replace(/x$/i, "")
-      : /^[A-Z]{1,5}$/.test(s.symbol)
-        ? s.symbol
-        : null;
 // Match the company name case-insensitively, the ticker only in caps: lowercase "ups" is a word, "UPS" is a company.
 const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mentions = (s: { name: string; symbol: string; issuer: string }, title: string) => {
