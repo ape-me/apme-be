@@ -341,7 +341,36 @@ export const WsStats = z.object({
 });
 // Live stock price on ws/stock:<mint>. Drives the hero price and the chart's last point without polling.
 export const WsPrice = z.object({ t: z.literal("price") }).merge(IngestPrice);
-export const WsMessage = z.discriminatedUnion("t", [WsTrade, WsNewToken, WsStats, WsPrice]);
+// News tagged to a stonk; impact/direction/confidence come from Jev, null until scored.
+export const NewsItem = z.object({
+  id: z.string(),
+  mint: Mint,
+  symbol: z.string(),
+  name: z.string(),
+  image: z.string().nullable(),
+  priceUsd: z.number().nullable(),
+  change24h: z.number().nullable(),
+  title: z.string(),
+  summary: z.string().nullable(),
+  source: z.string().nullable(),
+  url: z.string(),
+  articleImage: z.string().nullable(),
+  publishedAt: z.number().int(),
+  impact: z.enum(["none", "minor", "material", "major", "critical"]).nullable(),
+  direction: z.enum(["bullish", "bearish", "neutral"]).nullable(),
+  confidence: z.number().nullable(),
+  tier1: z.boolean(),
+});
+export const WsNews = z.object({
+  t: z.literal("news"),
+  mint: Mint,
+  symbol: z.string(),
+  title: z.string(),
+  source: z.string().nullable(),
+  url: z.string(),
+  publishedAt: z.number().int(),
+});
+export const WsMessage = z.discriminatedUnion("t", [WsTrade, WsNewToken, WsStats, WsPrice, WsNews]);
 export type WsMessage = z.infer<typeof WsMessage>;
 
 export const TickerToken = z.object({

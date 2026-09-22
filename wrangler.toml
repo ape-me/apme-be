@@ -55,3 +55,6 @@ name = "RL_APELIST"
 type = "ratelimit"
 namespace_id = "1002"
 simple = { limit = 5, period = 60 }
+
+[triggers]
+crons = ["*/5 * * * *"]

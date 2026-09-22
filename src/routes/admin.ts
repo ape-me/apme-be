@@ -11,6 +11,7 @@ import { mintAdminCodes } from "../services/account";
 import { accountRepo } from "../repos/account";
 import { stocksRepo } from "../repos/stocks";
 import { gasInfo, simulate } from "../services/swap";
+import { ingestNews } from "../services/news";
 
 const Patch = z.object({
   excluded: z.boolean().optional(),
@@ -54,6 +55,9 @@ admin.post("/invites", async (c) => {
 });
 
 admin.get("/gas", async (c) => c.json(await gasInfo(c.env)));
+admin.post("/news/run", async (c) =>
+  c.json(await ingestNews(c.env, c.get("sql"), Number(c.req.query("minute") ?? new Date().getUTCMinutes()))),
+);
 admin.post("/swap-simulate", async (c) =>
   c.json(await simulate(c.env, c.get("sql"), parse(SimBody, await c.req.json()))),
 );

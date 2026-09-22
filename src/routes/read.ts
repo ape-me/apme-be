@@ -17,6 +17,7 @@ import {
   HistoryRange,
 } from "../contract";
 import { catalog } from "../services/catalog";
+import { news } from "../services/news";
 import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
 import { COLLECTION_IDS } from "../services/collections";
@@ -82,6 +83,23 @@ read.get("/wallet/:address", (c) =>
     const address = parse(Mint, c.req.param("address"));
     const q = parse(z.object({ activity: Limit.default(50) }), c.req.query());
     return c.json(await wallet(c.env, c.get("sql"), address, q.activity));
+  }),
+);
+
+read.get("/news", (c) =>
+  cached(c.req.raw, 60, async () => {
+    const q = parse(z.object({ mints: z.string().optional(), limit: Limit.default(30) }), c.req.query());
+    const mints = (q.mints ?? "").split(",").filter((m) => Mint.safeParse(m).success);
+    return c.json({ items: await news.feed(c.get("sql"), mints, q.limit) });
+  }),
+);
+read.get("/news/ticker", (c) =>
+  cached(c.req.raw, 60, async () => c.json({ items: await news.ticker(c.get("sql"), 12) })),
+);
+read.get("/stocks/:mint/news", (c) =>
+  cached(c.req.raw, 60, async () => {
+    const q = parse(z.object({ limit: Limit.default(5) }), c.req.query());
+    return c.json({ items: await news.byMint(c.get("sql"), parse(Mint, c.req.param("mint")), q.limit) });
   }),
 );
 
