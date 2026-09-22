@@ -11,6 +11,7 @@ import {
   Sort,
   Column,
   Limit,
+  Ts,
   Cursor,
   TokenFilters,
   Issuer,
@@ -89,9 +90,12 @@ read.get("/wallet/:address", (c) =>
 
 read.get("/news", (c) =>
   cached(c.req.raw, 60, async () => {
-    const q = parse(z.object({ mints: z.string().optional(), limit: Limit.default(30) }), c.req.query());
+    const q = parse(
+      z.object({ mints: z.string().optional(), limit: Limit.default(30), before: Ts.optional() }),
+      c.req.query(),
+    );
     const mints = (q.mints ?? "").split(",").filter((m) => Mint.safeParse(m).success);
-    return c.json({ items: await news.feed(c.get("sql"), mints, q.limit) });
+    return c.json({ items: await news.feed(c.get("sql"), mints, q.limit, q.before ?? null) });
   }),
 );
 read.get("/news/ticker", (c) =>
@@ -104,8 +108,10 @@ read.get("/stocks/:mint/insights", (c) =>
 );
 read.get("/stocks/:mint/news", (c) =>
   cached(c.req.raw, 60, async () => {
-    const q = parse(z.object({ limit: Limit.default(5) }), c.req.query());
-    return c.json({ items: await news.byMint(c.get("sql"), parse(Mint, c.req.param("mint")), q.limit) });
+    const q = parse(z.object({ limit: Limit.default(5), before: Ts.optional() }), c.req.query());
+    return c.json({
+      items: await news.byMint(c.get("sql"), parse(Mint, c.req.param("mint")), q.limit, q.before ?? null),
+    });
   }),
 );
 

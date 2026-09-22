@@ -97,7 +97,7 @@ async function google(name: string): Promise<Raw[]> {
 
 // Follow Finnhub / Google redirects so we store the outlet's own URL. HEAD is not redirected by Finnhub, so GET
 // with redirect:"manual" and the body dropped. Null means we could not attribute the article, so we skip it.
-const AGGREGATORS = /(^|\.)(finnhub\.io|news\.google\.com|google\.com)$/;
+const AGGREGATORS = /(^|\.)(finnhub\.io)$/;
 async function resolve(url: string): Promise<string | null> {
   let cur = url;
   for (let i = 0; i < 4; i++) {
@@ -111,8 +111,15 @@ async function resolve(url: string): Promise<string | null> {
     cur = new URL(loc, cur).toString();
   }
   const clean = cur.replace(/[?&](\.tsrc|utm_[a-z]+|guccounter)=[^&]*/g, "").replace(/[?&]$/, "");
-  return AGGREGATORS.test(new URL(clean).hostname) ? null : clean;
+  const host = new URL(clean).hostname;
+  if (AGGREGATORS.test(host)) return null;
+  // Google News wraps the publisher behind a consent redirect that only a real browser can follow, so the
+  // article opens through Google. ucbcb=1 skips the consent interstitial.
+  return /(^|\.)news\.google\.com$/.test(host) ? `${clean}${clean.includes("?") ? "&" : "?"}ucbcb=1` : clean;
 }
+
+const PLACEHOLDER = /yahoo_finance|s\.yimg\.com\/rz\/stage|default|placeholder|logo\.png/i;
+const articleImage = (u: string | null) => (u && !PLACEHOLDER.test(u) ? u : null);
 
 const outlet = (url: string, source: string | null) => {
   const host = new URL(url).hostname.replace(/^www\./, "");
@@ -244,7 +251,7 @@ export async function scoreNews(env: Env, sql: Sql, limit = 120) {
       return null;
     });
     if (!sc) break;
-    const junk = sc.junk || sc.about < 0.6;
+    const junk = sc.junk || sc.about < 0.8;
     if (junk) dropped++;
     scored++;
     await newsRepo.score(sql, a.id, {
@@ -286,7 +293,7 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
         summary: n.summary,
         source: outlet(url, n.source),
         url,
-        image: n.image,
+        image: articleImage(n.image),
         publishedAt: n.publishedAt,
         t,
       });
@@ -332,9 +339,9 @@ export const shapeNews = (r: NewsRow) => ({
 });
 
 export const news = {
-  byMint: async (sql: Sql, mint: string, limit: number) =>
-    (await newsRepo.byMint(sql, mint, limit)).map(shapeNews),
-  feed: async (sql: Sql, mints: string[], limit: number) =>
-    (await newsRepo.feed(sql, mints, limit)).map(shapeNews),
+  byMint: async (sql: Sql, mint: string, limit: number, before: number | null) =>
+    (await newsRepo.byMint(sql, mint, limit, before)).map(shapeNews),
+  feed: async (sql: Sql, mints: string[], limit: number, before: number | null) =>
+    (await newsRepo.feed(sql, mints, limit, before)).map(shapeNews),
   ticker: async (sql: Sql, limit: number) => (await newsRepo.ticker(sql, limit)).map(shapeNews),
 };

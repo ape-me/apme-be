@@ -31,6 +31,17 @@ type Profile = {
 };
 type Metric = { metric: Record<string, number | null> };
 type Status = { isOpen: boolean; session: string | null; holiday: string | null };
+// Finnhub's session strings vary ("pre-market", "regular", "post-market", null when shut); the app gets four.
+const SESSION: Record<string, "pre" | "open" | "post" | "closed"> = {
+  "pre-market": "pre",
+  premarket: "pre",
+  regular: "open",
+  open: "open",
+  "post-market": "post",
+  postmarket: "post",
+  "after-hours": "post",
+  closed: "closed",
+};
 type Earnings = {
   earningsCalendar: {
     date: string;
@@ -70,8 +81,10 @@ export async function insights(env: Env, sql: Sql, mint: string) {
     ticker,
     market: {
       isOpen: status?.isOpen ?? null,
-      // pre-market / regular / post-market / closed, straight from the exchange calendar.
-      session: status?.session ?? null,
+      session: status
+        ? (SESSION[(status.session ?? "").toLowerCase()] ?? (status.isOpen ? "open" : "closed"))
+        : null,
+      rawSession: status?.session ?? null,
       holiday: status?.holiday ?? null,
       // "trades 24/7 here" is the point of the token: always say it, whatever the exchange is doing.
       alwaysOn: true,

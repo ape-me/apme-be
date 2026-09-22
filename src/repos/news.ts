@@ -56,11 +56,15 @@ export const newsRepo = {
     sql<{ id: string; title: string; summary: string | null; name: string; symbol: string; mint: string }[]>`
       SELECT n.id, n.title, n.summary, s.name, s.symbol, ns.mint FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
       WHERE n.impact IS NULL AND NOT n.junk ORDER BY n.published_at DESC LIMIT ${limit}`,
-  byMint: (sql: Sql, mint: string, limit: number) =>
-    sql<NewsRow[]>`${SELECT(sql)} AND ns.mint = ${mint} ORDER BY n.published_at DESC LIMIT ${limit}`,
+  byMint: (sql: Sql, mint: string, limit: number, before: number | null) =>
+    sql<
+      NewsRow[]
+    >`${SELECT(sql)} AND ns.mint = ${mint} ${before ? sql`AND n.published_at < ${before}` : sql``}
+      ORDER BY n.published_at DESC LIMIT ${limit}`,
   // Feed: the caller's stocks first, then everything else, newest first within each group.
-  feed: (sql: Sql, mints: string[], limit: number) =>
+  feed: (sql: Sql, mints: string[], limit: number, before: number | null) =>
     sql<NewsRow[]>`${SELECT(sql)} AND n.published_at > ${Math.floor(Date.now() / 1000) - 7 * 86400}
+      ${before ? sql`AND n.published_at < ${before}` : sql``}
       ORDER BY ${mints.length ? sql`(ns.mint IN ${sql(mints)}) DESC,` : sql``} n.published_at DESC LIMIT ${limit}`,
   // Ticker: one headline per stock, material or better when scored, biggest movers first.
   ticker: (sql: Sql, limit: number) =>

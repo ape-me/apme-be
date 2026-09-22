@@ -46,6 +46,7 @@ export const TokenFilters = z.object({
 });
 export type TokenFilters = z.infer<typeof TokenFilters>;
 export const Limit = z.coerce.number().int().min(1).max(500);
+export const Ts = z.coerce.number().int().min(0);
 export const Cursor = z.string().max(200).optional();
 
 // Top meme on a floor by 24h volume. Carries enough to draw its card without a second request.
