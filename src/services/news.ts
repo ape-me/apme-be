@@ -232,8 +232,10 @@ export async function scoreNews(env: Env, sql: Sql, limit = 120) {
 
 // Cron body: half the universe per run (each stock every 10 min), cheap filter, store, tag, notify rooms.
 export async function ingestNews(env: Env, sql: Sql, minute: number) {
+  // A Worker gets 1000 subrequests per invocation and each article costs one redirect fetch, so the universe is
+  // walked in quarters (every stock every 20 min) with a cap per stock.
   const stocks = await newsRepo.stocksForNews(sql);
-  const slice = stocks.filter((_, i) => i % 2 === Math.floor(minute / 5) % 2);
+  const slice = stocks.filter((_, i) => i % 4 === Math.floor(minute / 5) % 4);
   const t = Math.floor(Date.now() / 1000);
   const fresh = new Map<string, WsMessage[]>();
   let added = 0;
@@ -242,10 +244,12 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
     let raws = ticker && env.FINNHUB_KEY ? await finnhub(env, ticker) : [];
     if (!raws.length) raws = await google(s.name);
     const seen = new Set<string>();
-    for (const n of raws.sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 40)) {
+    let fetched = 0;
+    for (const n of raws.sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 12)) {
       const title = n.title.trim();
       if (!title || seen.has(title) || !mentions(s, title) || JUNK.test(title)) continue;
       seen.add(title);
+      if (++fetched > 6) break;
       const url = await resolve(n.url);
       if (!url) continue;
       const id = (await sha256hex(new TextEncoder().encode(url))).slice(0, 32);
@@ -279,7 +283,7 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
     }
     // Rank named outlets first by nudging TIER1 rows: handled at read time via source order; nothing to do here.
   }
-  const { scored } = await scoreNews(env, sql);
+  const { scored } = await scoreNews(env, sql, 40);
   if (minute % 60 === 0) await newsRepo.prune(sql, t - 7 * 86400);
   if (fresh.size) await rooms.publish(env, fresh);
   return { stocks: slice.length, added, scored };
