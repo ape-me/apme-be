@@ -26,6 +26,7 @@ type SwapRow = {
   status: string;
   error: string | null;
   msg_hash: string | null;
+  signed_tx: string | null;
   last_valid_block_height: string | null;
   created_at: string;
   submitted_at: string | null;
@@ -70,8 +71,8 @@ export const swapsRepo = {
   byId: (sql: Sql, id: string, userId: string) =>
     sql<SwapRow[]>`SELECT * FROM swaps WHERE id = ${id} AND user_id = ${userId}`,
   bySignature: (sql: Sql, sig: string) => sql<SwapRow[]>`SELECT * FROM swaps WHERE signature = ${sig}`,
-  markSubmitted: (sql: Sql, id: string, sig: string, t: number) =>
-    sql`UPDATE swaps SET status = 'submitted', signature = ${sig}, submitted_at = ${t} WHERE id = ${id} AND status = 'quoted'`,
+  markSubmitted: (sql: Sql, id: string, sig: string, signedTx: string, t: number) =>
+    sql`UPDATE swaps SET status = 'submitted', signature = ${sig}, signed_tx = ${signedTx}, submitted_at = ${t} WHERE id = ${id} AND status = 'quoted'`,
   markConfirmed: (sql: Sql, id: string, slot: number, t: number) =>
     sql<
       SwapRow[]

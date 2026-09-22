@@ -31,7 +31,7 @@ import type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 const FEE_BPS = 100;
 const REFERRAL_SHARE = 0.2;
 const MAX_SPONSORED_PER_HOUR = 20;
-const QUOTE_TTL_S = 60;
+const QUOTE_TTL_S = 45;
 const PRIORITY = {
   normal: { priorityLevel: "medium", maxLamports: 100_000 },
   fast: { priorityLevel: "high", maxLamports: 1_000_000 },
@@ -429,24 +429,17 @@ export async function submit(
   } catch (e) {
     const msg = (e as Error).message;
     await swapsRepo.markFailed(sql, row.id, msg.slice(0, 300));
+    if (/blockhash not found/i.test(msg)) throw new HttpError(410, "quote_expired");
     throw new HttpError(
       422,
       /slippage|0x1771|6001/i.test(msg)
         ? "slippage"
-        : /insufficient|0x1|InsufficientFunds/i.test(msg)
+        : /insufficient|0x1\b|InsufficientFunds/i.test(msg)
           ? "insufficient_funds"
           : `send failed: ${msg.slice(0, 120)}`,
     );
   }
-  await swapsRepo.markSubmitted(sql, row.id, sig, t);
-  if (Number(row.rent_lamports) > 0)
-    await swapsRepo.recordRent(
-      sql,
-      user.id,
-      row.side === "buy" ? row.output_mint : row.input_mint,
-      Number(row.rent_lamports),
-      t,
-    );
+  await swapsRepo.markSubmitted(sql, row.id, sig, Buffer.from(tx.serialize()).toString("base64"), t);
   return { signature: sig, status: "submitted" as const, requestId: row.id };
 }
 
@@ -456,14 +449,20 @@ export async function txStatus(env: Env, sql: Sql, signature: string) {
   const [st] = (await conn.getSignatureStatuses([signature], { searchTransactionHistory: true })).value;
   const [row] = await swapsRepo.bySignature(sql, signature);
   const t = now();
-  if (!st) {
+  // Not seen, or only processed (can still be dropped): rebroadcast while the blockhash is alive.
+  if (!st || st.confirmationStatus === "processed") {
     if (
+      !st &&
       row?.last_valid_block_height &&
       (await conn.getBlockHeight("confirmed")) > Number(row.last_valid_block_height)
     ) {
       if (row.status === "submitted") await swapsRepo.markFailed(sql, row.id, "expired");
       return { signature, status: "failed" as const, error: "expired" };
     }
+    if (row?.status === "submitted" && row.signed_tx)
+      await conn
+        .sendRawTransaction(Buffer.from(row.signed_tx, "base64"), { skipPreflight: true, maxRetries: 0 })
+        .catch(() => {});
     return { signature, status: "pending" as const };
   }
   if (st.err) {
@@ -474,6 +473,14 @@ export async function txStatus(env: Env, sql: Sql, signature: string) {
   if (row && row.status === "submitted") {
     const [done] = await swapsRepo.markConfirmed(sql, row.id, st.slot, t);
     if (done) {
+      if (Number(row.rent_lamports) > 0)
+        await swapsRepo.recordRent(
+          sql,
+          row.user_id,
+          row.side === "buy" ? row.output_mint : row.input_mint,
+          Number(row.rent_lamports),
+          t,
+        );
       const [ref] = await swapsRepo.referrerOf(sql, row.user_id);
       if (ref && Number(row.fee_usd) > 0 && Number(row.in_usd) >= 5)
         await swapsRepo.accrueReferral(

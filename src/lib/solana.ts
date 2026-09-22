@@ -131,10 +131,10 @@ export async function lookupTables(
   return addresses.flatMap((a) => (altCache.get(a) ? [altCache.get(a)!.alt] : []));
 }
 
-// A blockhash is valid ~60s; reuse one for 15s so back-to-back quotes skip the RPC call.
+// A blockhash is valid ~60s; reuse one for 5s so back-to-back quotes skip the RPC call.
 let bhCache: { at: number; blockhash: string; lastValidBlockHeight: number } | null = null;
 async function recentBlockhash(conn: Connection) {
-  if (bhCache && Date.now() - bhCache.at < 15_000) return bhCache;
+  if (bhCache && Date.now() - bhCache.at < 5_000) return bhCache;
   const r = await conn.getLatestBlockhash("confirmed");
   bhCache = { at: Date.now(), ...r };
   return bhCache;
