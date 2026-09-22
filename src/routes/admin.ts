@@ -29,6 +29,7 @@ const SimBody = z.object({
   outputMint: z.string(),
   amount: z.string().regex(/^\d+$/),
   taker: Mint,
+  slippageBps: z.number().int().min(10).max(2000).optional(),
 });
 
 export const admin = new Hono<{ Bindings: Env; Variables: DbVars }>();

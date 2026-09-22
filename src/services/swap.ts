@@ -16,6 +16,7 @@ import {
   createAtaIdempotent,
   fromJup,
   lookupTables,
+  transferFeeBps,
   buildV0,
   sha256hex,
   u8,
@@ -102,13 +103,16 @@ async function buildTx(
 
   // Buys: the typed amount is the total debit, so fee and rent come out of it before the swap.
   const tokenPk = new PublicKey(tokenMint);
-  const [[stockRows, memeRows], solUsdNow, tokenAtas] = await Promise.all([
+  const [[stockRows, memeRows], solUsdNow, tokenAtas, issuerFeeBps] = await Promise.all([
     Promise.all([swapsRepo.stockMeta(sql, tokenMint), swapsRepo.tokenMeta(sql, tokenMint)]),
     solUsd(),
     side === "buy"
       ? conn.getMultipleAccountsInfo([ata(taker, tokenPk), ata(taker, tokenPk, TOKEN_2022_PROGRAM)])
       : Promise.resolve([]),
+    transferFeeBps(conn, tokenPk),
   ]);
+  // Jupiter quotes before the mint's own transfer fee, so the fee must sit inside the slippage or every fill misses minOut.
+  const jupSlippageBps = slippageBps + issuerFeeBps;
   const stock = stockRows[0];
   const meme = stock ? null : memeRows[0];
   if (!stock && !meme) throw notFound("token");
@@ -120,7 +124,7 @@ async function buildTx(
   // Prefer direct routes for stocks (no intermediate token accounts) unless multi-hop pays >0.5% more.
   const getQuote = async (swapAmount: bigint, direct: boolean) => {
     const r = await fetch(
-      `${jupBase(env)}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${swapAmount}&slippageBps=${slippageBps}&restrictIntermediateTokens=true${direct ? "&onlyDirectRoutes=true" : ""}`,
+      `${jupBase(env)}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${swapAmount}&slippageBps=${jupSlippageBps}&restrictIntermediateTokens=true${direct ? "&onlyDirectRoutes=true" : ""}`,
       { headers: jupHeaders(env) },
     );
     const j = (await r.json()) as JupQuote;
@@ -196,7 +200,9 @@ async function buildTx(
   const feeRaw = side === "buy" ? feeOnInput : feeOnOutput;
   const swapUsd = Number(jqj.swapUsdValue ?? 0);
   const inUsd = side === "buy" ? Number(amount) / 1e6 : swapUsd;
-  const outUsd = side === "buy" ? swapUsd : Number(BigInt(jqj.outAmount) - feeOnOutput) / 1e6;
+  const issuerFeeUsd = Math.round(swapUsd * issuerFeeBps) / 10_000;
+  const outUsd =
+    (side === "buy" ? swapUsd : Number(BigInt(jqj.outAmount) - feeOnOutput) / 1e6) - issuerFeeUsd;
   if (priority === "turbo" && inUsd < TURBO_MIN_USD) priority = "fast";
 
   const usdcMint = new PublicKey(USDC_MINT),
@@ -236,6 +242,8 @@ async function buildTx(
   return {
     tokenDecimals,
     multiplier,
+    issuerFeeBps,
+    issuerFeeUsd,
     rentUsd,
     rentRaw,
     tx,
@@ -338,7 +346,11 @@ export async function quote(
     outUsd,
     priceImpactPct: Number(jqj.priceImpactPct) * 100,
     slippageBps,
+    suggestedSlippageBps: Math.min(500, Math.max(50, Math.ceil(Number(jqj.priceImpactPct) * 10_000) + 50)),
     fee: { bps: FEE_BPS, amountRaw: feeRaw.toString(), mint: USDC_MINT, usd: Number(feeRaw) / 1e6 },
+    issuerFee: b.issuerFeeBps
+      ? { bps: b.issuerFeeBps, usd: b.issuerFeeUsd, note: "charged by the token issuer on every transfer" }
+      : null,
     rent: {
       accounts: b.rentMints.length,
       lamports: rentLamports,

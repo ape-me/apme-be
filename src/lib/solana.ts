@@ -91,6 +91,21 @@ export const fromJup = (ix: JupIx) =>
     })),
   });
 
+// Token-2022 transfer fee (bps) baked into the mint, e.g. PreStocks charge 1% on every transfer. Cached 10 min.
+const feeCache = new Map<string, { at: number; bps: number }>();
+export async function transferFeeBps(conn: Connection, mint: PublicKey): Promise<number> {
+  const k = mint.toBase58(),
+    hit = feeCache.get(k);
+  if (hit && Date.now() - hit.at < 600_000) return hit.bps;
+  const info = await conn.getParsedAccountInfo(mint);
+  const data = info.value?.data;
+  const exts = data && "parsed" in data ? (data.parsed.info?.extensions ?? []) : [];
+  const cfg = exts.find((e: { extension: string }) => e.extension === "transferFeeConfig")?.state;
+  const bps = Number(cfg?.newerTransferFee?.transferFeeBasisPoints ?? 0);
+  feeCache.set(k, { at: Date.now(), bps });
+  return bps;
+}
+
 // Lookup tables are append-only and Jupiter's rarely change; cache per isolate for 10 minutes.
 const altCache = new Map<string, { at: number; alt: AddressLookupTableAccount }>();
 export async function lookupTables(
