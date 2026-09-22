@@ -471,7 +471,8 @@ export async function txStatus(env: Env, sql: Sql, signature: string) {
     return { signature, status: "failed" as const, slot: st.slot, error: JSON.stringify(st.err) };
   }
   if (row && row.status === "submitted") {
-    const [done] = await swapsRepo.markConfirmed(sql, row.id, st.slot, t);
+    const blockTime = (await conn.getBlockTime(st.slot).catch(() => null)) ?? Number(row.submitted_at ?? t);
+    const [done] = await swapsRepo.markConfirmed(sql, row.id, st.slot, blockTime);
     if (done) {
       if (Number(row.rent_lamports) > 0)
         await swapsRepo.recordRent(
