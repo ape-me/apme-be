@@ -56,14 +56,17 @@ export const swapsRepo = {
       priority: string;
       gasLamports: number;
       rentLamports: number;
+      swapUsd: number;
+      rentUsd: number;
+      issuerFeeUsd: number;
       msgHash: string;
       lastValidBlockHeight: number;
       t: number;
     },
   ) => sql`INSERT INTO swaps (id, user_id, wallet, side, input_mint, output_mint, symbol, in_raw, out_raw, min_out_raw, in_usd, out_usd, fee_bps, fee_raw, fee_usd,
-                               price_impact_pct, premium_pct, priority, gas_lamports, rent_lamports, msg_hash, last_valid_block_height, status, created_at)
+                               price_impact_pct, premium_pct, priority, gas_lamports, rent_lamports, swap_usd, rent_usd, issuer_fee_usd, msg_hash, last_valid_block_height, status, created_at)
            VALUES (${s.id}, ${s.userId}, ${s.wallet}, ${s.side}, ${s.inputMint}, ${s.outputMint}, ${s.symbol}, ${s.inRaw}, ${s.outRaw}, ${s.minOutRaw}, ${s.inUsd}, ${s.outUsd},
-                   ${s.feeBps}, ${s.feeRaw}, ${s.feeUsd}, ${s.priceImpactPct}, ${s.premiumPct}, ${s.priority}, ${s.gasLamports}, ${s.rentLamports}, ${s.msgHash}, ${s.lastValidBlockHeight}, 'quoted', ${s.t})`,
+                   ${s.feeBps}, ${s.feeRaw}, ${s.feeUsd}, ${s.priceImpactPct}, ${s.premiumPct}, ${s.priority}, ${s.gasLamports}, ${s.rentLamports}, ${s.swapUsd}, ${s.rentUsd}, ${s.issuerFeeUsd}, ${s.msgHash}, ${s.lastValidBlockHeight}, 'quoted', ${s.t})`,
   byId: (sql: Sql, id: string, userId: string) =>
     sql<SwapRow[]>`SELECT * FROM swaps WHERE id = ${id} AND user_id = ${userId}`,
   bySignature: (sql: Sql, sig: string) => sql<SwapRow[]>`SELECT * FROM swaps WHERE signature = ${sig}`,

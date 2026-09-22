@@ -39,17 +39,21 @@ export async function wallet(
   const meta = new Map(known.map((k) => [k.mint, k]));
 
   // Cost basis per mint: our swaps (stocks and memes) + indexer trades (memes bought on the floor elsewhere).
-  const basis = new Map<string, { boughtRaw: number; boughtUsd: number; soldRaw: number; soldUsd: number }>();
+  const basis = new Map<
+    string,
+    { boughtRaw: number; boughtUsd: number; soldRaw: number; soldUsd: number; feesUsd: number }
+  >();
   const add = (
     mint: string,
-    b: { boughtRaw: number; boughtUsd: number; soldRaw: number; soldUsd: number },
+    b: { boughtRaw: number; boughtUsd: number; soldRaw: number; soldUsd: number; feesUsd: number },
   ) => {
-    const cur = basis.get(mint) ?? { boughtRaw: 0, boughtUsd: 0, soldRaw: 0, soldUsd: 0 };
+    const cur = basis.get(mint) ?? { boughtRaw: 0, boughtUsd: 0, soldRaw: 0, soldUsd: 0, feesUsd: 0 };
     basis.set(mint, {
       boughtRaw: cur.boughtRaw + b.boughtRaw,
       boughtUsd: cur.boughtUsd + b.boughtUsd,
       soldRaw: cur.soldRaw + b.soldRaw,
       soldUsd: cur.soldUsd + b.soldUsd,
+      feesUsd: cur.feesUsd + b.feesUsd,
     });
   };
   for (const p of tradePositions)
@@ -58,6 +62,7 @@ export async function wallet(
       boughtUsd: p.bought_usd,
       soldRaw: Number(p.sold_raw),
       soldUsd: p.sold_usd,
+      feesUsd: 0,
     });
   for (const p of swapPositions)
     add(p.mint, {
@@ -65,6 +70,7 @@ export async function wallet(
       boughtUsd: Number(p.bought_usd),
       soldRaw: Number(p.sold_raw),
       soldUsd: Number(p.sold_usd),
+      feesUsd: Number(p.fees_usd),
     });
 
   const holdings: z.infer<typeof WalletResponse>["holdings"] = [];
@@ -84,6 +90,8 @@ export async function wallet(
     valueUsd: round(cashUsd),
     change24h: null,
     costUsd: null,
+    avgEntryUsd: null,
+    feesUsd: 0,
     pnlUsd: null,
     pnlPct: null,
   });
@@ -103,6 +111,8 @@ export async function wallet(
       valueUsd: round(solUsd),
       change24h: null,
       costUsd: null,
+      avgEntryUsd: null,
+      feesUsd: 0,
       pnlUsd: null,
       pnlPct: null,
     });
@@ -110,6 +120,7 @@ export async function wallet(
   let stocksUsd = 0,
     memesUsd = 0,
     costUsd = 0,
+    feesUsd = 0,
     pnlUsd = 0,
     realizedUsd = 0;
   for (const t of tokens) {
@@ -120,14 +131,17 @@ export async function wallet(
     const value = m.price_usd == null ? null : amount * m.price_usd;
     if (m.kind === "stock") stocksUsd += value ?? 0;
     else memesUsd += value ?? 0;
-    // Average price paid per raw unit across every buy we know of, applied to what is still held.
+    // Cost = what actually bought tokens (fees excluded), averaged per raw unit over every buy we know of.
     const b = basis.get(t.mint);
     let cost: number | null = null,
+      avgEntry: number | null = null,
       pnl: number | null = null,
       pnlPct: number | null = null;
+    feesUsd += b?.feesUsd ?? 0;
     if (b && b.boughtRaw > 0) {
       const avgPerRaw = b.boughtUsd / b.boughtRaw;
       cost = avgPerRaw * Number(t.raw);
+      avgEntry = cost / amount;
       costUsd += cost;
       if (value != null) {
         pnl = value - cost;
@@ -150,6 +164,8 @@ export async function wallet(
       valueUsd: round(value),
       change24h: m.change_24h,
       costUsd: round(cost),
+      avgEntryUsd: round(avgEntry, 4),
+      feesUsd: round(b?.feesUsd ?? 0)!,
       pnlUsd: round(pnl),
       pnlPct: round(pnlPct),
     });
@@ -245,6 +261,7 @@ export async function wallet(
     stocksUsd: round(stocksUsd)!,
     memesUsd: round(memesUsd)!,
     costUsd: round(costUsd)!,
+    feesUsd: round(feesUsd)!,
     pnlUsd: round(pnlUsd)!,
     realizedUsd: round(realizedUsd)!,
     pendingSwaps,

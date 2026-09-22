@@ -133,6 +133,8 @@ export const Holding = z.object({
   valueUsd: z.number().nullable(),
   change24h: z.number().nullable(),
   costUsd: z.number().nullable(),
+  avgEntryUsd: z.number().nullable(),
+  feesUsd: z.number(),
   pnlUsd: z.number().nullable(),
   pnlPct: z.number().nullable(),
 });
@@ -164,6 +166,7 @@ export const WalletResponse = z.object({
   stocksUsd: z.number(),
   memesUsd: z.number(),
   costUsd: z.number(),
+  feesUsd: z.number(),
   pnlUsd: z.number(),
   realizedUsd: z.number(),
   pendingSwaps: z.number().int(),

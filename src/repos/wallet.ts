@@ -33,6 +33,7 @@ type SwapPositionRow = {
   sold_raw: string;
   bought_usd: number;
   sold_usd: number;
+  fees_usd: number;
 };
 type SwapActivityRow = {
   id: string;
@@ -55,10 +56,10 @@ type SwapActivityRow = {
 export const walletRepo = {
   // Our own swaps (USDC ↔ token) grouped per token: what this wallet paid in USD and got in raw units, and vice versa.
   swapPositions: (sql: Sql, wallet: string) => sql<SwapPositionRow[]>`
-    SELECT mint, coalesce(sum(b_raw),0)::text AS bought_raw, coalesce(sum(s_raw),0)::text AS sold_raw, coalesce(sum(b_usd),0) AS bought_usd, coalesce(sum(s_usd),0) AS sold_usd FROM (
-      SELECT output_mint AS mint, out_raw AS b_raw, 0 AS s_raw, in_usd AS b_usd, 0 AS s_usd FROM swaps WHERE wallet = ${wallet} AND status = 'confirmed' AND side = 'buy'
+    SELECT mint, coalesce(sum(b_raw),0)::text AS bought_raw, coalesce(sum(s_raw),0)::text AS sold_raw, coalesce(sum(b_usd),0) AS bought_usd, coalesce(sum(s_usd),0) AS sold_usd, coalesce(sum(fees),0) AS fees_usd FROM (
+      SELECT output_mint AS mint, out_raw AS b_raw, 0 AS s_raw, coalesce(swap_usd, in_usd) AS b_usd, 0 AS s_usd, coalesce(fee_usd,0) + coalesce(rent_usd,0) + coalesce(issuer_fee_usd,0) AS fees FROM swaps WHERE wallet = ${wallet} AND status = 'confirmed' AND side = 'buy'
       UNION ALL
-      SELECT input_mint, 0, in_raw, 0, out_usd FROM swaps WHERE wallet = ${wallet} AND status = 'confirmed' AND side = 'sell') x GROUP BY mint`,
+      SELECT input_mint, 0, in_raw, 0, out_usd, coalesce(fee_usd,0) + coalesce(issuer_fee_usd,0) FROM swaps WHERE wallet = ${wallet} AND status = 'confirmed' AND side = 'sell') x GROUP BY mint`,
   swapActivity: (sql: Sql, wallet: string, limit: number) => sql<SwapActivityRow[]>`
     SELECT id, signature, side, status, error, created_at, confirmed_at, input_mint, output_mint, in_raw::text AS in_raw, out_raw::text AS out_raw, in_usd, out_usd, fee_usd, symbol
     FROM swaps WHERE wallet = ${wallet} AND status <> 'quoted' ORDER BY created_at DESC LIMIT ${limit}`,
