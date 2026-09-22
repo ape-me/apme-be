@@ -80,16 +80,6 @@ export const newsRepo = {
         ${a.before ? sql`AND n.published_at < ${a.before}` : sql``}) x
       WHERE rn <= ${a.perStock}
       ORDER BY ${a.mints.length ? sql`(mint IN ${sql(a.mints)}) DESC,` : sql``} published_at DESC LIMIT ${a.limit}`,
-  // Ticker: one headline per stock, material or better when scored, biggest movers first.
-  ticker: (sql: Sql, limit: number) =>
-    sql<
-      NewsRow[]
-    >`SELECT * FROM (SELECT DISTINCT ON (ns.mint) n.id, ns.mint, s.symbol, s.name, s.logo, s.price_usd, s.change_24h, n.title, n.summary, n.source, n.url, n.image,
-         n.published_at, n.impact, n.direction, n.confidence
-      FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
-      WHERE NOT n.junk AND NOT s.excluded AND n.published_at > ${Math.floor(Date.now() / 1000) - 86400} AND (n.impact IS NULL OR n.impact >= 2)
-      ORDER BY ns.mint, n.impact DESC NULLS LAST, n.published_at DESC) x
-      ORDER BY abs(coalesce(x.change_24h, 0)) DESC, x.published_at DESC LIMIT ${limit}`,
   prune: (sql: Sql, before: number) => sql`DELETE FROM news WHERE published_at < ${before}`,
   stocksForNews: (sql: Sql) =>
     sql<

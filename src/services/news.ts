@@ -346,5 +346,4 @@ export const news = {
     sql: Sql,
     a: { mints: string[]; limit: number; before: number | null; minImpact: number; perStock: number },
   ) => (await newsRepo.feed(sql, a)).map(shapeNews),
-  ticker: async (sql: Sql, limit: number) => (await newsRepo.ticker(sql, limit)).map(shapeNews),
 };

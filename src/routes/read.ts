@@ -112,9 +112,6 @@ read.get("/news", (c) =>
     });
   }),
 );
-read.get("/news/ticker", (c) =>
-  cached(c.req.raw, 60, async () => c.json({ items: await news.ticker(c.get("sql"), 12) })),
-);
 read.get("/stocks/:mint/insights", (c) =>
   cached(c.req.raw, 300, async () =>
     c.json(await insights(c.env, c.get("sql"), parse(Mint, c.req.param("mint")))),
