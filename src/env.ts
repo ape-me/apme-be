@@ -15,7 +15,9 @@ export type Env = {
   JUP_API_KEY?: string;
   FINNHUB_KEY?: string;
   AI_GATEWAY_URL?: string;
-  AI_GATEWAY_TOKEN?: string; // developers.jup.ag key; falls back to lite-api without it       // bearer for /v1/admin (stock overrides)            // Solana JSON-RPC for wallet balances (secret)
+  AI_GATEWAY_TOKEN?: string;
+  CF_API_TOKEN?: string;
+  AI?: { run: (model: string, input: unknown, opts?: unknown) => Promise<unknown> }; // developers.jup.ag key; falls back to lite-api without it       // bearer for /v1/admin (stock overrides)            // Solana JSON-RPC for wallet balances (secret)
   ROOMS: DurableObjectNamespace;
   RL_READ?: { limit(o: { key: string }): Promise<{ success: boolean }> };
   RL_APELIST?: { limit(o: { key: string }): Promise<{ success: boolean }> };
