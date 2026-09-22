@@ -18,7 +18,7 @@ import {
   HistoryRange,
 } from "../contract";
 import { catalog } from "../services/catalog";
-import { news } from "../services/news";
+import { news, IMPACT_LEVEL } from "../services/news";
 import { insights } from "../services/insights";
 import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
@@ -91,11 +91,25 @@ read.get("/wallet/:address", (c) =>
 read.get("/news", (c) =>
   cached(c.req.raw, 60, async () => {
     const q = parse(
-      z.object({ mints: z.string().optional(), limit: Limit.default(30), before: Ts.optional() }),
+      z.object({
+        mints: z.string().optional(),
+        limit: Limit.default(30),
+        before: Ts.optional(),
+        minImpact: z.enum(["none", "minor", "material", "major", "critical"]).optional(),
+        perStock: z.coerce.number().int().min(1).max(20).default(3),
+      }),
       c.req.query(),
     );
     const mints = (q.mints ?? "").split(",").filter((m) => Mint.safeParse(m).success);
-    return c.json({ items: await news.feed(c.get("sql"), mints, q.limit, q.before ?? null) });
+    return c.json({
+      items: await news.feed(c.get("sql"), {
+        mints,
+        limit: q.limit,
+        before: q.before ?? null,
+        minImpact: IMPACT_LEVEL[q.minImpact ?? "minor"] ?? 1,
+        perStock: q.perStock,
+      }),
+    });
   }),
 );
 read.get("/news/ticker", (c) =>

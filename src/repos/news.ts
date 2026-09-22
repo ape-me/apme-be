@@ -61,11 +61,25 @@ export const newsRepo = {
       NewsRow[]
     >`${SELECT(sql)} AND ns.mint = ${mint} ${before ? sql`AND n.published_at < ${before}` : sql``}
       ORDER BY n.published_at DESC LIMIT ${limit}`,
-  // Feed: the caller's stocks first, then everything else, newest first within each group.
-  feed: (sql: Sql, mints: string[], limit: number, before: number | null) =>
-    sql<NewsRow[]>`${SELECT(sql)} AND n.published_at > ${Math.floor(Date.now() / 1000) - 7 * 86400}
-      ${before ? sql`AND n.published_at < ${before}` : sql``}
-      ORDER BY ${mints.length ? sql`(ns.mint IN ${sql(mints)}) DESC,` : sql``} n.published_at DESC LIMIT ${limit}`,
+  // Feed: at most `perStock` per stonk so one busy company cannot fill a page, the caller's stocks first,
+  // newest first inside each group. Unscored articles are held back until the next scoring pass.
+  feed: (
+    sql: Sql,
+    a: { mints: string[]; limit: number; before: number | null; minImpact: number; perStock: number },
+  ) =>
+    sql<
+      NewsRow[]
+    >`SELECT id, mint, symbol, name, logo, price_usd, change_24h, title, summary, source, url, image,
+                          published_at, impact, direction, confidence FROM (
+      SELECT n.id, ns.mint, s.symbol, s.name, s.logo, s.price_usd, s.change_24h, n.title, n.summary, n.source, n.url, n.image,
+             n.published_at, n.impact, n.direction, n.confidence,
+             row_number() OVER (PARTITION BY ns.mint ORDER BY n.published_at DESC) AS rn
+      FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
+      WHERE NOT n.junk AND NOT s.excluded AND n.impact IS NOT NULL AND n.impact >= ${a.minImpact}
+        AND n.published_at > ${Math.floor(Date.now() / 1000) - 7 * 86400}
+        ${a.before ? sql`AND n.published_at < ${a.before}` : sql``}) x
+      WHERE rn <= ${a.perStock}
+      ORDER BY ${a.mints.length ? sql`(mint IN ${sql(a.mints)}) DESC,` : sql``} published_at DESC LIMIT ${a.limit}`,
   // Ticker: one headline per stock, material or better when scored, biggest movers first.
   ticker: (sql: Sql, limit: number) =>
     sql<

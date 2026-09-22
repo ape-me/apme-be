@@ -27,6 +27,7 @@ const TIER1 = [
   "the verge",
 ];
 const IMPACT = ["none", "minor", "material", "major", "critical"] as const;
+export const IMPACT_LEVEL: Record<string, number> = { none: 0, minor: 1, material: 2, major: 3, critical: 4 };
 const ymd = (x: Date) => x.toISOString().slice(0, 10);
 const xmlTag = (s: string, t: string) =>
   (s.match(new RegExp(`<${t}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${t}>`))?.[1] ?? "").trim();
@@ -251,7 +252,7 @@ export async function scoreNews(env: Env, sql: Sql, limit = 120) {
       return null;
     });
     if (!sc) break;
-    const junk = sc.junk || sc.about < 0.8;
+    const junk = sc.junk || sc.about < 0.8 || sc.impact === 0;
     if (junk) dropped++;
     scored++;
     await newsRepo.score(sql, a.id, {
@@ -341,7 +342,9 @@ export const shapeNews = (r: NewsRow) => ({
 export const news = {
   byMint: async (sql: Sql, mint: string, limit: number, before: number | null) =>
     (await newsRepo.byMint(sql, mint, limit, before)).map(shapeNews),
-  feed: async (sql: Sql, mints: string[], limit: number, before: number | null) =>
-    (await newsRepo.feed(sql, mints, limit, before)).map(shapeNews),
+  feed: async (
+    sql: Sql,
+    a: { mints: string[]; limit: number; before: number | null; minImpact: number; perStock: number },
+  ) => (await newsRepo.feed(sql, a)).map(shapeNews),
   ticker: async (sql: Sql, limit: number) => (await newsRepo.ticker(sql, limit)).map(shapeNews),
 };
