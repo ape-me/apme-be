@@ -8,8 +8,10 @@ import type { TradeRow, CandleRow } from "../repos/market";
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
 const int = (v: unknown): number => (v == null ? 0 : Number(v));
 
-// NYSE regular session, Mon–Fri 09:30–16:00 America/New_York. Holidays ignored for now.
-export function marketOpen(now = new Date()): boolean {
+export type Session = "pre" | "open" | "post" | "closed";
+
+// US equities in America/New_York: pre 04:00, regular 09:30, post 16:00, shut at 20:00. Holidays ignored for now.
+export function marketSession(now = new Date()): Session {
   const p = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     weekday: "short",
@@ -19,10 +21,14 @@ export function marketOpen(now = new Date()): boolean {
   })
     .formatToParts(now)
     .reduce<Record<string, string>>((a, x) => ((a[x.type] = x.value), a), {});
-  if (p.weekday === "Sat" || p.weekday === "Sun") return false;
+  if (p.weekday === "Sat" || p.weekday === "Sun") return "closed";
   const m = Number(p.hour) * 60 + Number(p.minute);
-  return m >= 570 && m < 960;
+  if (m >= 570 && m < 960) return "open";
+  if (m >= 240 && m < 570) return "pre";
+  if (m >= 960 && m < 1200) return "post";
+  return "closed";
 }
+export const marketOpen = (now = new Date()) => marketSession(now) === "open";
 
 export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
   tags: tagsFor(r),

@@ -73,7 +73,7 @@ export async function insights(env: Env, sql: Sql, mint: string) {
   ]);
   const m = metrics?.metric ?? {};
   const next = earnings?.earningsCalendar?.[0] ?? null;
-  const onChain = stock.price_usd == null ? null : Number(stock.price_usd) * Number(stock.multiplier ?? 1);
+  const onChain = num(stock.price_usd);
   const last = num(quote?.c);
   return {
     mint,
@@ -102,6 +102,7 @@ export async function insights(env: Env, sql: Sql, mint: string) {
         }
       : null,
     // Premium against the last NASDAQ print, not the indexer's mark: this is the number a user can verify.
+    // priceUsd is already per displayed unit, so the scaled-UI multiplier must not be applied again here.
     premiumVsLastPct:
       last && onChain ? Math.round(((onChain / last - 1) * 100 + Number.EPSILON) * 100) / 100 : null,
     stats: ticker

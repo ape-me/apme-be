@@ -3,7 +3,7 @@ import { stocksRepo } from "../repos/stocks";
 import { tokensRepo, defaultSort, type Sort, type Column } from "../repos/tokens";
 import { tickerRepo } from "../repos/ticker";
 import { notFound } from "../lib/errors";
-import { shapeStock, shapeToken, shapeHeader, marketOpen } from "./shape";
+import { shapeStock, shapeToken, shapeHeader, marketSession } from "./shape";
 import { COLLECTIONS, filterCollection } from "./collections";
 import type {
   StocksResponse,
@@ -27,6 +27,11 @@ const decodeCursor = (c?: string) => {
   } catch {
     return undefined;
   }
+};
+
+const market = () => {
+  const session = marketSession();
+  return { session, isOpen: session === "open" };
 };
 
 const MOVER_MIN_LIQUIDITY = 20_000;
@@ -55,34 +60,38 @@ export const catalog = {
     issuers?: string[],
     collection?: string,
   ): Promise<z.infer<typeof StocksResponse>> => {
-    const open = marketOpen();
+    const m = market();
     const rows = await stocksRepo.all(sql);
     let keep = issuers?.length ? rows.filter((r) => issuers.includes(r.issuer)) : rows; // 94 rows, cheaper than a second query plan
     if (collection) keep = filterCollection(keep, collection);
-    return { stocks: keep.map((r) => shapeStock(r, open)), asOf: Math.floor(Date.now() / 1000) };
+    return {
+      stocks: keep.map((r) => shapeStock(r, m.isOpen)),
+      market: m,
+      asOf: Math.floor(Date.now() / 1000),
+    };
   },
   // Home screen groups. Hand-picked by symbol so the app never hard-codes a list; a symbol the DB doesn't have is skipped.
   collections: async (sql: Sql): Promise<z.infer<typeof CollectionsResponse>> => {
-    const open = marketOpen();
+    const m = market();
     const rows = await stocksRepo.all(sql);
     const bySym = new Map(rows.map((r) => [r.symbol, r]));
     const pick = (syms: readonly string[]) =>
       syms
         .map((x) => bySym.get(x))
         .filter((r): r is NonNullable<typeof r> => !!r)
-        .map((r) => shapeStock(r, open));
+        .map((r) => shapeStock(r, m.isOpen));
     const collections = COLLECTIONS.map((c) => ({
       id: c.id,
       title: c.title,
       tagline: c.tagline,
-      stocks: c.symbols ? pick(c.symbols) : filterCollection(rows, c.id).map((r) => shapeStock(r, open)), // symbols keep the hand-picked order
+      stocks: c.symbols ? pick(c.symbols) : filterCollection(rows, c.id).map((r) => shapeStock(r, m.isOpen)), // symbols keep the hand-picked order
     })).filter((c) => c.stocks.length);
-    return { collections, asOf: Math.floor(Date.now() / 1000) };
+    return { collections, market: m, asOf: Math.floor(Date.now() / 1000) };
   },
   // Gainers / losers / most traded over 24h. A thin pool can print "+170%" on BABA while the real share is flat,
   // so a stock qualifies only when its token tracks the real price (small premium) or is deep enough to trust.
   movers: async (sql: Sql, limit: number): Promise<z.infer<typeof MoversResponse>> => {
-    const open = marketOpen();
+    const m = market();
     const rows = (await stocksRepo.all(sql)).filter(
       (r) =>
         r.price_usd != null &&
@@ -95,23 +104,25 @@ export const catalog = {
       [...rows]
         .sort((a, b) => (desc ? f(b) - f(a) : f(a) - f(b)))
         .slice(0, limit)
-        .map((r) => shapeStock(r, open));
+        .map((r) => shapeStock(r, m.isOpen));
     return {
       gainers: by((r) => r.change_24h ?? 0),
       losers: by((r) => r.change_24h ?? 0, false),
       mostTraded: by((r) => r.vol_24h_usd ?? 0),
+      market: m,
       asOf: Math.floor(Date.now() / 1000),
     };
   },
   // Watchlists live on the phone; these return the same shapes for a handful of mints, in request order.
   stocksByMints: async (sql: Sql, mints: string[]): Promise<z.infer<typeof StocksResponse>> => {
-    const open = marketOpen();
+    const mkt = market();
     const by = new Map((await stocksRepo.byMints(sql, mints)).map((r) => [r.mint, r]));
     return {
       stocks: mints
         .map((m) => by.get(m))
         .filter((r): r is NonNullable<typeof r> => !!r)
-        .map((r) => shapeStock(r, open)),
+        .map((r) => shapeStock(r, mkt.isOpen)),
+      market: mkt,
       asOf: Math.floor(Date.now() / 1000),
     };
   },

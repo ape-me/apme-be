@@ -117,7 +117,13 @@ export const Collection = z.object({
   tagline: z.string(),
   stocks: z.array(Stock),
 });
-export const CollectionsResponse = z.object({ collections: z.array(Collection), asOf: z.number().int() });
+// US market clock, one per list response: the session belongs to the exchange, not to any one stock.
+export const Market = z.object({ session: z.enum(["pre", "open", "post", "closed"]), isOpen: z.boolean() });
+export const CollectionsResponse = z.object({
+  collections: z.array(Collection),
+  market: Market,
+  asOf: z.number().int(),
+});
 // Portfolio. Holdings come from the chain; cost basis and P&L from our own trade tape, so they exist only for
 // tokens this wallet traded on floors we index (null otherwise). Values in USD at current prices.
 export const Holding = z.object({
@@ -179,6 +185,7 @@ export const MoversResponse = z.object({
   gainers: z.array(Stock),
   losers: z.array(Stock),
   mostTraded: z.array(Stock),
+  market: Market,
   asOf: z.number().int(),
 });
 export type Issuer = z.infer<typeof Issuer>;
@@ -268,7 +275,7 @@ export const Trade = z.object({
 });
 export type Trade = z.infer<typeof Trade>;
 
-export const StocksResponse = z.object({ stocks: z.array(Stock), asOf: z.number().int() });
+export const StocksResponse = z.object({ stocks: z.array(Stock), market: Market, asOf: z.number().int() });
 export const StockTokensResponse = z.object({
   stock: Stock,
   tokens: z.array(TokenCard),
