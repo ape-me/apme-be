@@ -6,6 +6,7 @@ import {
   USDC_MINT,
   SOL_MINT,
   TOKEN_PROGRAM,
+  TOKEN_2022_PROGRAM,
   ATA_PROGRAM,
   ATA_RENT_LAMPORTS,
   connection,
@@ -24,7 +25,7 @@ import { swapsRepo } from "../repos/swaps";
 import { solPrice as solUsd } from "../lib/rpc";
 import type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 
-// USDC-only trading; our 1% is a direct USDC transfer to the fee wallet, we pay gas, user pays rent in USDC.
+// USDC-only trading. Buys: typed amount = total debit (fee + rent inside). Sells: fee off the USDC out. We pay gas.
 
 const FEE_BPS = 100;
 const REFERRAL_SHARE = 0.2;
@@ -91,17 +92,33 @@ async function buildTx(
   if (!side) throw new HttpError(422, "usdc_only");
   const amount = BigInt(q.amount);
   if (amount <= 0n) throw badRequest("amount must be > 0");
+  if (!env.GAS_WALLET_SECRET || !env.FEE_WALLET) throw new HttpError(503, "gas_wallet_not_configured");
   const slippageBps = q.slippageBps ?? defaults.slippageBps;
   let priority = (q.priority ?? defaults.priority) as keyof typeof PRIORITY;
-
   const tokenMint = side === "buy" ? outputMint : inputMint;
-  const metaP = Promise.all([swapsRepo.stockMeta(sql, tokenMint), swapsRepo.tokenMeta(sql, tokenMint)]);
+  const gas = gasKeypair(env);
+  const taker = new PublicKey(q.taker);
+  const conn = connection(env);
 
-  // Fee on the USDC side. Buys: taken off the top, the rest is swapped. Sells: 1% of the guaranteed minimum out.
+  // Buys: the typed amount is the total debit, so fee and rent come out of it before the swap.
+  const tokenPk = new PublicKey(tokenMint);
+  const [[stockRows, memeRows], solUsdNow, tokenAtas] = await Promise.all([
+    Promise.all([swapsRepo.stockMeta(sql, tokenMint), swapsRepo.tokenMeta(sql, tokenMint)]),
+    solUsd(),
+    side === "buy"
+      ? conn.getMultipleAccountsInfo([ata(taker, tokenPk), ata(taker, tokenPk, TOKEN_2022_PROGRAM)])
+      : Promise.resolve([]),
+  ]);
+  const stock = stockRows[0];
+  const meme = stock ? null : memeRows[0];
+  if (!stock && !meme) throw notFound("token");
+  const symbol = stock?.symbol ?? meme?.symbol ?? null;
+  const lamportsToUsd = (l: number) => (solUsdNow ? Math.ceil((l / 1e9) * solUsdNow * 100) / 100 : 0);
   const feeOnInput = side === "buy" ? (amount * BigInt(FEE_BPS)) / 10_000n : 0n;
-  const swapAmount = amount - feeOnInput;
+  let rentLamports = side === "buy" && tokenAtas.every((a) => !a) ? ATA_RENT_LAMPORTS : 0;
+
   // Prefer direct routes for stocks (no intermediate token accounts) unless multi-hop pays >0.5% more.
-  const getQuote = async (direct: boolean) => {
+  const getQuote = async (swapAmount: bigint, direct: boolean) => {
     const r = await fetch(
       `${jupBase(env)}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${swapAmount}&slippageBps=${slippageBps}&restrictIntermediateTokens=true${direct ? "&onlyDirectRoutes=true" : ""}`,
       { headers: jupHeaders(env) },
@@ -109,25 +126,71 @@ async function buildTx(
     const j = (await r.json()) as JupQuote;
     return { ok: r.ok && !j.error, status: r.status, j };
   };
-  const [[stockRows, memeRows], multi, solUsdNow] = await Promise.all([metaP, getQuote(false), solUsd()]);
-  const stock = stockRows[0];
-  const meme = stock ? null : memeRows[0];
-  if (!stock && !meme) throw notFound("token");
-  const symbol = stock?.symbol ?? meme?.symbol ?? null;
-  const direct = stock ? await getQuote(true) : null;
-  if (!multi.ok) {
-    const msg = (multi.j.error ?? "").toLowerCase();
-    throw new HttpError(
-      422,
-      msg.includes("route")
-        ? "no_route"
-        : msg.includes("amount")
-          ? "amount_too_small"
-          : `jupiter: ${multi.j.error ?? multi.status}`,
-    );
+  const route = async (swapAmount: bigint) => {
+    if (swapAmount <= 0n) throw new HttpError(422, "amount_too_small");
+    const [multi, direct] = await Promise.all([
+      getQuote(swapAmount, false),
+      stock ? getQuote(swapAmount, true) : null,
+    ]);
+    if (!multi.ok) {
+      const msg = (multi.j.error ?? "").toLowerCase();
+      throw new HttpError(
+        422,
+        msg.includes("route")
+          ? "no_route"
+          : msg.includes("amount")
+            ? "amount_too_small"
+            : `jupiter: ${multi.j.error ?? multi.status}`,
+      );
+    }
+    const jqj =
+      direct?.ok && Number(direct.j.outAmount) >= Number(multi.j.outAmount) * 0.995 ? direct.j : multi.j;
+    const ir = await fetch(`${jupBase(env)}/swap/v1/swap-instructions`, {
+      method: "POST",
+      headers: jupHeaders(env),
+      body: JSON.stringify({
+        quoteResponse: jqj,
+        userPublicKey: q.taker,
+        wrapAndUnwrapSol: false,
+        dynamicComputeUnitLimit: true,
+        prioritizationFeeLamports: { priorityLevelWithMaxLamports: { ...PRIORITY[priority], global: false } },
+      }),
+    });
+    const ixs = (await ir.json()) as JupIxs;
+    if (!ir.ok || ixs.error) throw new HttpError(422, `jupiter: ${ixs.error ?? ir.status}`);
+    // Accounts the route really opens: we front the SOL, the user pays the same value in USDC.
+    const setupAll = ixs.setupInstructions.map(fromJup);
+    const ataIxs = setupAll.filter((t) => t.programId.equals(ATA_PROGRAM) && t.keys[1]);
+    const [existing, alts] = await Promise.all([
+      ataIxs.length
+        ? conn.getMultipleAccountsInfo(ataIxs.map((t) => t.keys[1]!.pubkey))
+        : Promise.resolve([]),
+      lookupTables(conn, ixs.addressLookupTableAddresses),
+    ]);
+    let lamports = 0;
+    const rentMints: string[] = [];
+    const setup = setupAll.filter((t) => {
+      if (!t.programId.equals(ATA_PROGRAM) || !t.keys[0]) return true;
+      if (existing[ataIxs.indexOf(t)]) return false;
+      t.keys[0] = { pubkey: gas.publicKey, isSigner: true, isWritable: true };
+      lamports += ATA_RENT_LAMPORTS;
+      rentMints.push(t.keys[3]?.pubkey.toBase58() ?? "");
+      return true;
+    });
+    return { jqj, ixs, setup, alts, lamports, rentMints };
+  };
+
+  let rentRaw = BigInt(Math.round(lamportsToUsd(rentLamports) * 1e6));
+  let r = await route(side === "buy" ? amount - feeOnInput - rentRaw : amount);
+  if (side === "buy" && r.lamports > rentLamports) {
+    rentLamports = r.lamports;
+    rentRaw = BigInt(Math.round(lamportsToUsd(rentLamports) * 1e6));
+    r = await route(amount - feeOnInput - rentRaw);
   }
-  const jqj =
-    direct?.ok && Number(direct.j.outAmount) >= Number(multi.j.outAmount) * 0.995 ? direct.j : multi.j;
+  const { jqj, ixs, setup, alts, rentMints } = r;
+  rentLamports = r.lamports;
+  const rentUsd = Number(rentRaw) / 1e6;
+
   const minOut = BigInt(jqj.otherAmountThreshold);
   const feeOnOutput = side === "sell" ? (minOut * BigInt(FEE_BPS)) / 10_000n : 0n;
   const feeRaw = side === "buy" ? feeOnInput : feeOnOutput;
@@ -136,47 +199,8 @@ async function buildTx(
   const outUsd = side === "buy" ? swapUsd : Number(BigInt(jqj.outAmount) - feeOnOutput) / 1e6;
   if (priority === "turbo" && inUsd < TURBO_MIN_USD) priority = "fast";
 
-  // Instructions from Jupiter, then rebuilt around our fee payer.
-  if (!env.GAS_WALLET_SECRET || !env.FEE_WALLET) throw new HttpError(503, "gas_wallet_not_configured");
-  const gas = gasKeypair(env);
-  const taker = new PublicKey(q.taker);
-  const ir = await fetch(`${jupBase(env)}/swap/v1/swap-instructions`, {
-    method: "POST",
-    headers: jupHeaders(env),
-    body: JSON.stringify({
-      quoteResponse: jqj,
-      userPublicKey: q.taker,
-      wrapAndUnwrapSol: false,
-      dynamicComputeUnitLimit: true,
-      prioritizationFeeLamports: { priorityLevelWithMaxLamports: { ...PRIORITY[priority], global: false } },
-    }),
-  });
-  const ixs = (await ir.json()) as JupIxs;
-  if (!ir.ok || ixs.error) throw new HttpError(422, `jupiter: ${ixs.error ?? ir.status}`);
-
-  // Rent for token accounts the route really opens: we front the SOL, charge the same value in USDC.
-  const conn = connection(env);
-  const setupAll = ixs.setupInstructions.map(fromJup);
-  const ataIxs = setupAll.filter((t) => t.programId.equals(ATA_PROGRAM) && t.keys[1]);
-  const [existing, alts] = await Promise.all([
-    ataIxs.length ? conn.getMultipleAccountsInfo(ataIxs.map((t) => t.keys[1]!.pubkey)) : Promise.resolve([]),
-    lookupTables(conn, ixs.addressLookupTableAddresses),
-  ]);
-  let rentLamports = 0;
-  const rentMints: string[] = [];
-  const setup = setupAll.filter((t) => {
-    if (!t.programId.equals(ATA_PROGRAM) || !t.keys[0]) return true;
-    const i = ataIxs.indexOf(t);
-    if (existing[i]) return false; // already open: drop the instruction
-    t.keys[0] = { pubkey: gas.publicKey, isSigner: true, isWritable: true };
-    rentLamports += ATA_RENT_LAMPORTS;
-    rentMints.push(t.keys[3]?.pubkey.toBase58() ?? "");
-    return true;
-  });
-  const rentUsd = solUsdNow ? Math.ceil((rentLamports / 1e9) * solUsdNow * 100) / 100 : 0;
-  const rentRaw = BigInt(Math.round(rentUsd * 1e6));
   const usdcMint = new PublicKey(USDC_MINT),
-    feeWallet = new PublicKey(env.FEE_WALLET!);
+    feeWallet = new PublicKey(env.FEE_WALLET);
   const chargeRaw = feeRaw + rentRaw;
   const feeIx =
     chargeRaw > 0n
@@ -324,6 +348,7 @@ export async function quote(
       note: b.rentUsd > 0 ? "one-time network fee to open the token account, charged in USDC" : null,
     },
     totalChargeUsd: (Number(feeRaw) + Number(b.rentRaw)) / 1e6,
+    swapUsd: side === "buy" ? (Number(amount) - Number(feeRaw) - Number(b.rentRaw)) / 1e6 : inUsd,
     gas: { paidBy: "apeme", priority, lamports: gasLamports, rentLamports },
     premiumPct,
     markUsd: stock?.mark_usd == null ? null : Number(stock.mark_usd),
