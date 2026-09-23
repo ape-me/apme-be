@@ -21,6 +21,8 @@ const MIN_ORDER_USD = 5;
 // Jupiter's order account (372 bytes) plus its escrow. Measured on chain; the refund goes to the maker on
 // fill, never to whoever paid it, so it is a real cost to us unless the order carries it.
 const ORDER_RENT_LAMPORTS = 4_030_000;
+// Jupiter refuses any mint with a transfer fee, which today is every PreStocks name.
+const EXCLUDED_ISSUERS = ["prestocks"];
 
 export type OrderInput = {
   wallet: string;
@@ -89,13 +91,29 @@ const ownWallet = (wallets: WalletRow[], address: string) => {
     throw new HttpError(403, "wallet is not one of yours");
 };
 
+// Every rule the order sheet needs, so the phone never has to hardcode one or learn it from a refusal.
+export async function orderConfig(sql: Sql) {
+  const [minUsd, sol] = await Promise.all([configNum(sql, "orders.min_usd", MIN_ORDER_USD), solUsd()]);
+  return {
+    minUsd,
+    maxOpen: MAX_OPEN,
+    buyFeeBps: FEE_BPS,
+    sellFeeBps: 0,
+    accountCostUsd: sol ? Math.ceil((ORDER_RENT_LAMPORTS / 1e9) * sol * 100) / 100 : null,
+    excludedIssuers: EXCLUDED_ISSUERS,
+  };
+}
+
 export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], q: OrderInput) {
   ownWallet(wallets, q.wallet);
   if (!env.JUP_REFERRAL_ACCOUNT) throw new HttpError(503, "orders are not configured");
   const [stock] = await swapsRepo.stockMeta(sql, q.mint);
   if (!stock) throw notFound("stock");
   // Jupiter refuses any mint with a transfer fee, which is every PreStocks name.
-  if (stock.issuer === "prestocks") throw badRequest("limit orders are not available for pre-IPO tokens");
+  if (EXCLUDED_ISSUERS.includes(stock.issuer))
+    throw new HttpError(400, "limit orders are not available for pre-IPO tokens", {
+      excludedIssuers: EXCLUDED_ISSUERS,
+    });
   if ((await ordersRepo.openFor(sql, user.id)).length >= MAX_OPEN)
     throw new HttpError(429, "too many open orders");
 
@@ -107,7 +125,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   const displayed = (raw: number) => (raw / 10 ** dec) * mult;
   const orderUsd = q.side === "buy" ? making / 1e6 : displayed(making) * Number(stock.price_usd ?? 0);
   const minUsd = await configNum(sql, "orders.min_usd", MIN_ORDER_USD);
-  if (orderUsd < minUsd) throw badRequest(`orders start at $${minUsd}`);
+  if (orderUsd < minUsd) throw new HttpError(400, `orders start at $${minUsd}`, { minUsd });
   const taking =
     q.side === "buy"
       ? Math.round((orderUsd / q.triggerUsd / mult) * 10 ** dec)

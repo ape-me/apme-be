@@ -21,6 +21,7 @@ import { catalog } from "../services/catalog";
 import { news, IMPACT_LEVEL } from "../services/news";
 import { insights } from "../services/insights";
 import { depth } from "../services/swap";
+import { orderConfig } from "../services/orders";
 import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
 import { COLLECTION_IDS } from "../services/collections";
@@ -89,6 +90,8 @@ read.get("/wallet/:address", (c) =>
   }),
 );
 
+// Public: the order sheet reads its own rules at launch. Mounted here, before the authed /v1/orders router.
+read.get("/orders/config", (c) => cached(c.req.raw, 60, async () => c.json(await orderConfig(c.get("sql")))));
 read.get("/news", (c) =>
   cached(c.req.raw, 60, async () => {
     const q = parse(
