@@ -4,18 +4,16 @@ import { walletRepo } from "../repos/wallet";
 import { balances, solPrice, usdcTransfers, SOL_MINT, USDC_MINT } from "../lib/rpc";
 import { ata } from "../lib/solana";
 import { txStatus } from "./swap";
+import { swapAct, depositAct, tradeAct, USDC_LOGO, type Act } from "./activity";
 import { PublicKey } from "@solana/web3.js";
-import type { WalletResponse, Activity } from "../contract";
+import type { WalletResponse } from "../contract";
 import type { z } from "zod";
 
 const SOL_LOGO =
   "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png";
-const USDC_LOGO =
-  "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png";
 
 const round = (v: number | null | undefined, d = 2) =>
   v == null || !Number.isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d;
-type Act = z.infer<typeof Activity>;
 
 // Holdings from chain, cost basis from our swaps + indexed trades, activity from swaps + deposits + trades.
 export async function wallet(
@@ -35,6 +33,7 @@ export async function wallet(
       walletRepo.swapActivity(sql, address, activityLimit),
       usdcTransfers(env, usdcAta).catch(() => []),
     ]);
+  if (transfers.length) await walletRepo.saveDeposits(sql, address, transfers).catch(() => {});
   // Rows still "submitted" only flip when /v1/tx is polled; settle them here so pendingSwaps is honest.
   const settled = await Promise.all(
     swapRows
@@ -195,77 +194,19 @@ export async function wallet(
   const activity: Act[] = [];
   let pendingSwaps = 0;
   for (const r of swapRows) {
-    const tokenMint = r.side === "buy" ? r.output_mint : r.input_mint;
-    const tm = meta.get(tokenMint);
-    const decimals = tm?.decimals ?? 6;
-    const tokenRaw = r.side === "buy" ? r.out_raw : r.in_raw;
-    const status = r.status === "confirmed" ? "confirmed" : r.status === "failed" ? "failed" : "pending";
-    if (status === "pending") pendingSwaps++;
+    const a = swapAct(r, meta);
+    if (a.status === "pending") pendingSwaps++;
     if (r.signature) seen.add(r.signature);
-    activity.push({
-      sig: r.signature,
-      ts: Number(r.confirmed_at ?? r.created_at),
-      type: r.side,
-      status,
-      source: "apeme",
-      side: r.side,
-      mint: tokenMint,
-      symbol: r.symbol ?? tm?.symbol ?? null,
-      image: tm?.image ?? null,
-      stockSymbol: tm?.kind === "meme" ? tm.quote_symbol : null,
-      amount: tokenRaw
-        ? (Number(tokenRaw) / 10 ** decimals) * (tm?.kind === "stock" ? Number(tm.multiplier ?? 1) : 1)
-        : 0,
-      quote: r.side === "buy" ? Number(r.in_raw) / 1e6 : r.out_raw == null ? null : Number(r.out_raw) / 1e6,
-      usd: round(r.side === "buy" ? r.in_usd : r.out_usd),
-      feeUsd: round(r.fee_usd),
-      from: null,
-      error: r.error,
-    });
+    activity.push(a);
   }
   for (const d of transfers) {
     if (seen.has(d.sig)) continue;
     seen.add(d.sig);
-    activity.push({
-      sig: d.sig,
-      ts: d.ts,
-      type: d.direction === "in" ? "deposit" : "withdraw",
-      status: "confirmed",
-      source: "chain",
-      side: null,
-      mint: USDC_MINT,
-      symbol: "USDC",
-      image: USDC_LOGO,
-      stockSymbol: null,
-      amount: d.amount,
-      quote: null,
-      usd: round(d.amount),
-      feeUsd: null,
-      from: d.from,
-      error: null,
-    });
+    activity.push(depositAct(d));
   }
   for (const r of tradeRows) {
     if (seen.has(r.signature)) continue;
-    const quote = Number(r.quote_raw) / 10 ** r.quote_decimals;
-    activity.push({
-      sig: r.signature,
-      ts: Number(r.block_time),
-      type: r.side,
-      status: "confirmed",
-      source: "chain",
-      side: r.side,
-      mint: r.token_mint,
-      symbol: r.symbol,
-      image: r.image,
-      stockSymbol: r.stock_symbol,
-      amount: Number(r.base_raw) / 10 ** r.decimals,
-      quote,
-      usd: round(quote * (r.quote_usd ?? r.stock_price_usd ?? NaN)),
-      feeUsd: null,
-      from: null,
-      error: null,
-    });
+    activity.push(tradeAct(r));
   }
   activity.sort((a, b) => b.ts - a.ts);
 

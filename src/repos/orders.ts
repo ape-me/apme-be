@@ -18,6 +18,9 @@ export type OrderRow = {
   request_id: string | null;
   msg_hash: string | null;
   signature: string | null;
+  cancel_signature: string | null;
+  decimals: number | null;
+  multiplier: number | null;
   created_at: number;
   updated_at: number;
   filled_at: number | null;
@@ -56,9 +59,11 @@ export const ordersRepo = {
   byId: (sql: Sql, id: string, userId: string) =>
     sql<OrderRow[]>`SELECT * FROM orders WHERE id = ${id} AND user_id = ${userId}`,
   // A quote is half an order: it only becomes one when the user signs, so the list and the cap ignore them.
+  // The stonk's decimals and rebase multiplier ride along so a raw amount can be shown as a share count.
   forUser: (sql: Sql, userId: string, limit: number) =>
-    sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} AND status <> 'quoted'
-        ORDER BY created_at DESC LIMIT ${limit}`,
+    sql<OrderRow[]>`SELECT o.*, s.decimals, s.multiplier FROM orders o LEFT JOIN stocks s ON s.mint = o.mint
+        WHERE o.user_id = ${userId} AND o.status <> 'quoted'
+        ORDER BY o.created_at DESC LIMIT ${limit}`,
   // A second order on the same stonk must not pay again for the token account the first one opened. Only a
   // live order counts: a quote nobody signed never opened anything.
   openForMint: (sql: Sql, userId: string, mint: string) =>
@@ -74,6 +79,8 @@ export const ordersRepo = {
     sql`UPDATE orders SET request_id = ${requestId}, msg_hash = ${msgHash}, updated_at = ${t} WHERE id = ${id}`,
   markOpen: (sql: Sql, id: string, signature: string, t: number) =>
     sql`UPDATE orders SET status = 'open', signature = ${signature}, updated_at = ${t} WHERE id = ${id}`,
+  markCancelled: (sql: Sql, id: string, signature: string, t: number) =>
+    sql`UPDATE orders SET status = 'cancelled', cancel_signature = ${signature}, updated_at = ${t} WHERE id = ${id}`,
   markFailed: (sql: Sql, id: string, error: string, t: number) =>
     sql`UPDATE orders SET status = 'failed', error = ${error}, updated_at = ${t} WHERE id = ${id}`,
   settle: (sql: Sql, id: string, status: string, fillUsd: number | null, feeUsd: number | null, t: number) =>

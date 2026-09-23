@@ -21,6 +21,7 @@ import { catalog } from "../services/catalog";
 import { news, IMPACT_LEVEL } from "../services/news";
 import { insights } from "../services/insights";
 import { depth } from "../services/swap";
+import { activityPage } from "../services/activity";
 import { orderConfig } from "../services/orders";
 import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
@@ -87,6 +88,35 @@ read.get("/wallet/:address", (c) =>
     const address = parse(Mint, c.req.param("address"));
     const q = parse(z.object({ activity: Limit.default(50) }), c.req.query());
     return c.json(await wallet(c.env, c.get("sql"), address, q.activity));
+  }),
+);
+
+// Paged history: the flat activity list on /wallet is the first paint, this is everything behind it.
+const ActivityQuery = z.object({
+  from: z.coerce.number().int().optional(),
+  to: z.coerce.number().int().optional(),
+  type: z.string().max(60).optional(),
+  mint: Mint.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: z.string().max(200).optional(),
+});
+const ACT_TYPES = ["buy", "sell", "deposit", "withdraw"];
+read.get("/wallet/:address/activity", (c) =>
+  cached(c.req.raw, 5, async () => {
+    const address = parse(Mint, c.req.param("address"));
+    const q = parse(ActivityQuery, c.req.query());
+    const types = (q.type?.split(",") ?? []).map((t) => t.trim()).filter(Boolean);
+    if (types.some((t) => !ACT_TYPES.includes(t))) throw badRequest(`type must be one of ${ACT_TYPES}`);
+    return c.json(
+      await activityPage(c.get("sql"), address, {
+        types,
+        mint: q.mint ?? null,
+        from: q.from ?? null,
+        to: q.to ?? null,
+        limit: q.limit,
+        cursor: q.cursor ?? null,
+      }),
+    );
   }),
 );
 

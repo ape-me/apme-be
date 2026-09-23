@@ -74,24 +74,35 @@ const trigger = async <T>(env: Env, path: string, body?: unknown): Promise<T> =>
   return j;
 };
 
-const shape = (o: OrderRow) => ({
-  id: o.id,
-  mint: o.mint,
-  symbol: o.symbol,
-  side: o.side,
-  makingRaw: o.making_raw,
-  takingRaw: o.taking_raw,
-  makingUsd: o.making_usd,
-  triggerUsd: o.trigger_usd,
-  status: o.status,
-  signature: o.signature,
-  createdAt: Number(o.created_at),
-  filledAt: o.filled_at == null ? null : Number(o.filled_at),
-  fillUsd: o.fill_usd,
-  feeUsd: o.fee_usd,
-  rentUsd: o.rent_usd,
-  error: o.error,
-});
+// A raw amount means nothing on a card, so the stonk leg is also given as the share count the user was
+// quoted. Jupiter fills a trigger order at its own rate, so the fill price is always triggerUsd.
+const shape = (o: OrderRow) => {
+  const stonkRaw = o.side === "buy" ? o.taking_raw : o.making_raw;
+  const qty =
+    o.decimals == null ? null : (Number(stonkRaw) / 10 ** Number(o.decimals)) * Number(o.multiplier ?? 1);
+  const part = o.fill_usd == null || !o.making_usd ? 0 : Number(o.fill_usd) / Number(o.making_usd);
+  return {
+    id: o.id,
+    mint: o.mint,
+    symbol: o.symbol,
+    side: o.side,
+    makingRaw: o.making_raw,
+    takingRaw: o.taking_raw,
+    makingUsd: o.making_usd,
+    triggerUsd: o.trigger_usd,
+    status: o.status,
+    signature: o.signature,
+    cancelSignature: o.cancel_signature,
+    takingQty: qty,
+    filledQty: part && qty != null ? qty * part : null,
+    createdAt: Number(o.created_at),
+    filledAt: o.filled_at == null ? null : Number(o.filled_at),
+    fillUsd: o.fill_usd,
+    feeUsd: o.fee_usd,
+    rentUsd: o.rent_usd,
+    error: o.error,
+  };
+};
 
 // The escrow has to be covered before we build anything, so a short wallet is told what it is missing.
 async function requireUsdc(env: Env, wallet: string, needed: number) {
@@ -378,10 +389,9 @@ export async function submitCancel(env: Env, sql: Sql, user: UserRow, id: string
   const [row] = await ordersRepo.byId(sql, id, user.id);
   if (!row) throw notFound("order");
   if (row.status !== "open") throw new HttpError(409, `order is ${row.status}`);
-  await send(env, signedTransaction, row);
-  const t = Math.floor(Date.now() / 1000);
-  await ordersRepo.settle(sql, row.id, "cancelled", row.fill_usd, row.fee_usd, t);
-  return { id: row.id, status: "cancelled" as const };
+  const signature = await send(env, signedTransaction, row);
+  await ordersRepo.markCancelled(sql, row.id, signature, Math.floor(Date.now() / 1000));
+  return { id: row.id, status: "cancelled" as const, signature };
 }
 
 // Jupiter is the truth: anything of ours still marked open is settled against their active and history lists.
