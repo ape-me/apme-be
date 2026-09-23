@@ -13,7 +13,7 @@ const sql = postgres(process.env.DATABASE_URL!, { max: 4, prepare: false, idle_t
 const open = await ordersRepo.allOpen(sql, 500);
 const settled = await reconcile(env, sql, open);
 
-if (settled.length && env.PUBLIC_URL && env.INGEST_SECRET) {
+if (settled.length && env.INGEST_URL && env.INGEST_SECRET) {
   const body = JSON.stringify({
     sentAt: Math.floor(Date.now() / 1000),
     orders: settled.map(({ row, status, fillUsd }) => ({
@@ -27,7 +27,7 @@ if (settled.length && env.PUBLIC_URL && env.INGEST_SECRET) {
       signature: row.signature,
     })),
   });
-  const r = await fetch(`${env.PUBLIC_URL}/ingest/trades`, {
+  const r = await fetch(`${env.INGEST_URL}/trades`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-signature": await sign(env.INGEST_SECRET, body) },
     body,
