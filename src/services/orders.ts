@@ -26,8 +26,9 @@ import { PublicKey, VersionedTransaction } from "@solana/web3.js";
 
 const FEE_BPS = 150;
 const MAX_OPEN = 20;
-// Fallback only: the live floor is the app_config key `orders.min_usd`, changeable without a deploy.
+// Fallbacks only: the live values are the app_config keys `orders.min_usd` and `orders.min_gap_bps`.
 const MIN_ORDER_USD = 5;
+const MIN_GAP_BPS = 0;
 // Jupiter's order account (372 bytes) plus its escrow. Measured on chain; the refund goes to the maker on
 // fill, never to whoever paid it, so it is a real cost to us unless the order carries it.
 const ORDER_RENT_LAMPORTS = 4_030_000;
@@ -114,9 +115,13 @@ const ownWallet = (wallets: WalletRow[], address: string) => {
 
 // Every rule the order sheet needs, so the phone never has to hardcode one or learn it from a refusal.
 export async function orderConfig(sql: Sql) {
-  const minUsd = await configNum(sql, "orders.min_usd", MIN_ORDER_USD);
+  const [minUsd, minGapBps] = await Promise.all([
+    configNum(sql, "orders.min_usd", MIN_ORDER_USD),
+    configNum(sql, "orders.min_gap_bps", MIN_GAP_BPS),
+  ]);
   return {
     minUsd,
+    minGapBps,
     maxOpen: MAX_OPEN,
     buyFeeBps: 0,
     sellFeeBps: FEE_BPS,
@@ -144,9 +149,25 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   if (!Number.isFinite(making) || making <= 0) throw badRequest("amount must be a positive integer");
   // priceUsd is per displayed unit, so a raw amount converts through both the decimals and the multiplier.
   const displayed = (raw: number) => (raw / 10 ** dec) * mult;
-  const orderUsd = q.side === "buy" ? making / 1e6 : displayed(making) * Number(stock.price_usd ?? 0);
-  const minUsd = await configNum(sql, "orders.min_usd", MIN_ORDER_USD);
+  const spot = Number(stock.price_usd ?? 0);
+  const orderUsd = q.side === "buy" ? making / 1e6 : displayed(making) * spot;
+  const [minUsd, minGapBps] = await Promise.all([
+    configNum(sql, "orders.min_usd", MIN_ORDER_USD),
+    configNum(sql, "orders.min_gap_bps", MIN_GAP_BPS),
+  ]);
   if (orderUsd < minUsd) throw new HttpError(400, `orders start at $${minUsd}`, { minUsd });
+  // A trigger already in the money is a market order in disguise: it fills on the next keeper pass and
+  // skips the swap fee. A limit order waits for a price that has not happened yet.
+  const buy = q.side === "buy";
+  const limitUsd = spot * (buy ? 1 - minGapBps / 10_000 : 1 + minGapBps / 10_000);
+  if (spot > 0 && (buy ? q.triggerUsd >= limitUsd : q.triggerUsd <= limitUsd))
+    throw new HttpError(
+      400,
+      buy
+        ? "a limit buy has to sit below the current price — use the buy ticket to fill now"
+        : "a limit sell has to sit above the current price — use the sell ticket to fill now",
+      { spotUsd: spot, limitUsd: Math.round(limitUsd * 1e4) / 1e4, minGapBps },
+    );
   const taking =
     q.side === "buy"
       ? Math.round((orderUsd / q.triggerUsd / mult) * 10 ** dec)
