@@ -30,7 +30,8 @@ import { PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web
 // Limit orders live in Jupiter's Trigger program: they hold the escrow and their keepers fill it. We build,
 // take the signature, and keep our own row so the order has a user, a symbol and a cost basis.
 
-const FEE_BPS = 150;
+// Same rate as a market trade: a limit order is not a premium product.
+const FEE_BPS = 100;
 const MAX_OPEN = 20;
 // Fallbacks only: the live values are the app_config keys `orders.min_usd` and `orders.min_gap_bps`.
 const MIN_ORDER_USD = 5;
