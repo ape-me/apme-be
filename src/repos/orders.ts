@@ -59,6 +59,11 @@ export const ordersRepo = {
   forUser: (sql: Sql, userId: string, limit: number) =>
     sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} AND status <> 'quoted'
         ORDER BY created_at DESC LIMIT ${limit}`,
+  // A second order on the same stonk must not pay again for the token account the first one opened. Only a
+  // live order counts: a quote nobody signed never opened anything.
+  openForMint: (sql: Sql, userId: string, mint: string) =>
+    sql<{ id: string }[]>`SELECT id FROM orders WHERE user_id = ${userId} AND mint = ${mint}
+        AND status = 'open'`,
   openFor: (sql: Sql, userId: string) =>
     sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} AND status = 'open'`,
   // A cancel is a second transaction to sign, so the row carries its request and hash while it is in flight.

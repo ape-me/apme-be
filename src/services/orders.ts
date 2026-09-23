@@ -9,7 +9,13 @@ import {
   connection,
   ata,
   gasPays,
+  buildV0,
+  lookupTables,
+  createAtaIdempotent,
+  transferChecked,
   ATA_RENT_LAMPORTS,
+  ATA_PROGRAM,
+  TOKEN_PROGRAM,
   TOKEN_2022_PROGRAM,
 } from "../lib/solana";
 import { ordersRepo, type OrderRow } from "../repos/orders";
@@ -19,7 +25,7 @@ import { configNum } from "./config";
 import { accountRepo } from "../repos/account";
 import { jupBase, jupHeaders, signedByUser } from "./swap";
 import type { UserRow, WalletRow } from "../repos/account";
-import { PublicKey, VersionedTransaction } from "@solana/web3.js";
+import { PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 
 // Limit orders live in Jupiter's Trigger program: they hold the escrow and their keepers fill it. We build,
 // take the signature, and keep our own row so the order has a user, a symbol and a cost basis.
@@ -130,9 +136,39 @@ export async function orderConfig(sql: Sql) {
   };
 }
 
+// Jupiter bills the maker for gas and for the token account it opens, and our makers hold no SOL. We rebuild
+// its transaction with the gas wallet paying both, and add one USDC transfer that settles what we fronted.
+async function withCharge(
+  env: Env & { FEE_WALLET: string },
+  built: string,
+  gas: PublicKey,
+  maker: PublicKey,
+  chargeRaw: bigint,
+) {
+  const conn = connection(env);
+  const jup = VersionedTransaction.deserialize(Buffer.from(built, "base64"));
+  const alts = await lookupTables(
+    conn,
+    jup.message.addressTableLookups.map((l) => l.accountKey.toBase58()),
+  );
+  const ixs = TransactionMessage.decompile(jup.message, { addressLookupTableAccounts: alts }).instructions;
+  for (const ix of ixs)
+    if (ix.programId.equals(ATA_PROGRAM)) ix.keys[0] = { pubkey: gas, isSigner: true, isWritable: true };
+  const usdc = new PublicKey(USDC_MINT);
+  const fee = new PublicKey(env.FEE_WALLET);
+  const charge = chargeRaw
+    ? [
+        createAtaIdempotent(gas, fee, usdc, TOKEN_PROGRAM),
+        transferChecked(ata(maker, usdc), usdc, ata(fee, usdc), maker, chargeRaw, 6, TOKEN_PROGRAM),
+      ]
+    : [];
+  const { tx } = await buildV0(conn, gas, [...charge, ...ixs], alts);
+  return tx;
+}
+
 export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], q: OrderInput) {
   ownWallet(wallets, q.wallet);
-  if (!env.JUP_REFERRAL_ACCOUNT) throw new HttpError(503, "orders are not configured");
+  if (!env.JUP_REFERRAL_ACCOUNT || !env.FEE_WALLET) throw new HttpError(503, "orders are not configured");
   const [stock] = await swapsRepo.stockMeta(sql, q.mint);
   if (!stock) throw notFound("stock");
   // Jupiter refuses any mint with a transfer fee, which is every PreStocks name.
@@ -182,8 +218,13 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   ]);
   const feeBps = q.side === "sell" ? FEE_BPS : 0;
   const feeUsd = feeBps ? Math.round(orderUsd * feeBps) / 10_000 : 0;
-  const rentUsd = sol ? Math.ceil(((ORDER_RENT_LAMPORTS + ataLamports) / 1e9) * sol * 100) / 100 : 0;
-  if (q.side === "buy") await requireUsdc(env, q.wallet, making);
+
+  // We front every lamport this order costs, and Jupiter refunds the deposit to the maker, not to us. So the
+  // maker pays it here in USDC and gets it back in SOL when the order closes: square on both sides.
+  const sameMint = ataLamports ? await ordersRepo.openForMint(sql, user.id, q.mint) : [];
+  const rentLamports = ORDER_RENT_LAMPORTS + (sameMint.length ? 0 : ataLamports);
+  const chargeRaw = buy && sol ? BigInt(Math.ceil((rentLamports / 1e9) * sol * 1e6)) : 0n;
+  if (buy) await requireUsdc(env, q.wallet, making + Number(chargeRaw));
 
   const gas = gasKeypair(env).publicKey;
   const built = await trigger<{ order: string; requestId: string; transaction: string }>(env, "createOrder", {
@@ -200,7 +241,14 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     computeUnitPrice: "auto",
   });
 
-  const tx = gasPays(VersionedTransaction.deserialize(Buffer.from(built.transaction, "base64")), gas);
+  const tx = await withCharge(
+    env as Env & { FEE_WALLET: string },
+    built.transaction,
+    gas,
+    new PublicKey(q.wallet),
+    chargeRaw,
+  );
+  const rentUsd = Number(chargeRaw) / 1e6;
   const t = Math.floor(Date.now() / 1000);
   await ordersRepo.insert(sql, {
     id: built.order,
@@ -230,6 +278,8 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     orderUsd,
     escrowUsd: q.side === "buy" ? making / 1e6 : null,
     triggerUsd: q.triggerUsd,
+    costUsd: rentUsd,
+    totalUsd: making / 1e6 + rentUsd,
     fee: {
       bps: feeBps,
       usd: feeUsd,
