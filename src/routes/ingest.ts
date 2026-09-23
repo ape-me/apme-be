@@ -14,7 +14,12 @@ ingest.post("/trades", async (c) => {
   if (body.length > 1_000_000) throw badRequest("batch too large");
   if (!(await verify(c.env.INGEST_SECRET, body, c.req.header("x-signature")))) throw unauthorized();
   const r = IngestBatch.safeParse(JSON.parse(body));
-  if (!r.success) throw badRequest("bad batch");
+  // The sender is HMAC-authenticated, so name what failed: a silent 400 makes a dropped batch unexplainable.
+  if (!r.success) {
+    const i = r.error.issues[0];
+    console.error("bad batch", JSON.stringify(r.error.issues.slice(0, 3)));
+    throw badRequest(`bad batch: ${i?.path.join(".")} ${i?.message}`);
+  }
   if (Math.abs(Date.now() / 1000 - r.data.sentAt) > 60) throw unauthorized();
 
   const byRoom = new Map<string, WsMessage[]>();

@@ -344,7 +344,8 @@ export const IngestBatch = z.object({
   orders: z.array(IngestOrder).max(500).default([]),
   tokens: z.array(IngestToken).max(200).default([]),
   news: z.array(IngestNews).max(200).default([]),
-  prices: z.array(IngestPrice).max(500).default([]),
+  // A burst of ticks can starve the indexer's 250ms flush timer, so the cap has to clear a pile-up, not a tick.
+  prices: z.array(IngestPrice).max(5000).default([]),
   sentAt: z.number().int(),
 });
 export type IngestBatch = z.infer<typeof IngestBatch>;
