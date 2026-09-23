@@ -69,16 +69,24 @@ export const newsRepo = {
     sql<{ id: string; title: string; summary: string | null; name: string; symbol: string; mint: string }[]>`
       SELECT n.id, n.title, n.summary, s.name, s.symbol, ns.mint FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
       WHERE n.impact IS NULL AND NOT n.junk ORDER BY n.published_at DESC LIMIT ${limit}`,
-  byMint: (sql: Sql, mint: string, limit: number, before: number | null) =>
+  byMint: (sql: Sql, mint: string, limit: number, before: number | null, withImage: boolean) =>
     sql<
       NewsRow[]
     >`${SELECT(sql)} AND ns.mint = ${mint} ${before ? sql`AND n.published_at < ${before}` : sql``}
+      ${withImage ? sql`AND n.image IS NOT NULL` : sql``}
       ORDER BY n.published_at DESC LIMIT ${limit}`,
   // Feed: at most `perStock` per stonk so one busy company cannot fill a page, the caller's stocks first,
   // newest first inside each group. Unscored articles are held back until the next scoring pass.
   feed: (
     sql: Sql,
-    a: { mints: string[]; limit: number; before: number | null; minImpact: number; perStock: number },
+    a: {
+      mints: string[];
+      limit: number;
+      before: number | null;
+      minImpact: number;
+      perStock: number;
+      withImage: boolean;
+    },
   ) =>
     sql<
       NewsRow[]
@@ -92,7 +100,8 @@ export const newsRepo = {
       FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
       WHERE NOT n.junk AND NOT s.excluded AND n.impact IS NOT NULL AND n.impact >= ${a.minImpact}
         AND n.published_at > ${Math.floor(Date.now() / 1000) - 7 * 86400}
-        ${a.before ? sql`AND n.published_at < ${a.before}` : sql``}) x
+        ${a.before ? sql`AND n.published_at < ${a.before}` : sql``}
+        ${a.withImage ? sql`AND n.image IS NOT NULL` : sql``}) x
       WHERE rn <= ${a.perStock} AND dup = 1
       ORDER BY ${a.mints.length ? sql`(mint IN ${sql(a.mints)}) DESC,` : sql``} published_at DESC LIMIT ${a.limit}`,
   prune: (sql: Sql, before: number) => sql`DELETE FROM news WHERE published_at < ${before}`,

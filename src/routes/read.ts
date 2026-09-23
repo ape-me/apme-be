@@ -98,6 +98,7 @@ read.get("/news", (c) =>
         before: Ts.optional(),
         minImpact: z.enum(["none", "minor", "material", "major", "critical"]).optional(),
         perStock: z.coerce.number().int().min(1).max(20).default(3),
+        withImage: z.enum(["0", "1"]).optional(),
       }),
       c.req.query(),
     );
@@ -109,6 +110,7 @@ read.get("/news", (c) =>
         before: q.before ?? null,
         minImpact: IMPACT_LEVEL[q.minImpact ?? "minor"] ?? 1,
         perStock: q.perStock,
+        withImage: q.withImage === "1",
       }),
     });
   }),
@@ -125,9 +127,18 @@ read.get("/stocks/:mint/depth", (c) =>
 );
 read.get("/stocks/:mint/news", (c) =>
   cached(c.req.raw, 60, async () => {
-    const q = parse(z.object({ limit: Limit.default(5), before: Ts.optional() }), c.req.query());
+    const q = parse(
+      z.object({ limit: Limit.default(5), before: Ts.optional(), withImage: z.enum(["0", "1"]).optional() }),
+      c.req.query(),
+    );
     return c.json({
-      items: await news.byMint(c.get("sql"), parse(Mint, c.req.param("mint")), q.limit, q.before ?? null),
+      items: await news.byMint(
+        c.get("sql"),
+        parse(Mint, c.req.param("mint")),
+        q.limit,
+        q.before ?? null,
+        q.withImage === "1",
+      ),
     });
   }),
 );

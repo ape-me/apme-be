@@ -418,10 +418,17 @@ export const shapeNews = (r: NewsRow) => ({
 });
 
 export const news = {
-  byMint: async (sql: Sql, mint: string, limit: number, before: number | null) =>
-    (await newsRepo.byMint(sql, mint, limit, before)).map(shapeNews),
+  byMint: async (sql: Sql, mint: string, limit: number, before: number | null, withImage = false) =>
+    (await newsRepo.byMint(sql, mint, limit, before, withImage)).map(shapeNews),
   feed: async (
     sql: Sql,
-    a: { mints: string[]; limit: number; before: number | null; minImpact: number; perStock: number },
+    a: {
+      mints: string[];
+      limit: number;
+      before: number | null;
+      minImpact: number;
+      perStock: number;
+      withImage: boolean;
+    },
   ) => (await newsRepo.feed(sql, a)).map(shapeNews),
 };
