@@ -55,10 +55,12 @@ export const ordersRepo = {
         ON CONFLICT (id) DO NOTHING`,
   byId: (sql: Sql, id: string, userId: string) =>
     sql<OrderRow[]>`SELECT * FROM orders WHERE id = ${id} AND user_id = ${userId}`,
+  // A quote is half an order: it only becomes one when the user signs, so the list and the cap ignore them.
   forUser: (sql: Sql, userId: string, limit: number) =>
-    sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} ORDER BY created_at DESC LIMIT ${limit}`,
+    sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} AND status <> 'quoted'
+        ORDER BY created_at DESC LIMIT ${limit}`,
   openFor: (sql: Sql, userId: string) =>
-    sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} AND status IN ('quoted', 'open')`,
+    sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} AND status = 'open'`,
   // A cancel is a second transaction to sign, so the row carries its request and hash while it is in flight.
   setPending: (sql: Sql, id: string, requestId: string, msgHash: string, t: number) =>
     sql`UPDATE orders SET request_id = ${requestId}, msg_hash = ${msgHash}, updated_at = ${t} WHERE id = ${id}`,

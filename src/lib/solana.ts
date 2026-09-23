@@ -6,6 +6,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
   AddressLookupTableAccount,
+  MessageV0,
 } from "@solana/web3.js";
 import bs58 from "bs58";
 import type { Env } from "../env";
@@ -16,6 +17,14 @@ export const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss6
 export const TOKEN_2022_PROGRAM = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 export const ATA_PROGRAM = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 export const ATA_RENT_LAMPORTS = 2039280;
+const REFERRAL_PROGRAM = new PublicKey("REFER4ZgmyYx9c6He5XfaTMiGfdLwRnkV4RPp9t9iF3");
+
+// Where Jupiter pays our cut. The referral program cannot open one for a Token-2022 mint, so only USDC has one.
+export const referralAta = (referral: string, mint: string) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from("referral_ata"), new PublicKey(referral).toBuffer(), new PublicKey(mint).toBuffer()],
+    REFERRAL_PROGRAM,
+  )[0].toBase58();
 
 export const connection = (env: Env) => new Connection(env.RPC_URL, "confirmed");
 
@@ -160,3 +169,28 @@ export const sha256hex = async (b: Uint8Array) =>
   Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", u8(b))))
     .map((x) => x.toString(16).padStart(2, "0"))
     .join("");
+
+// Jupiter builds every order transaction with the maker as fee payer, and our makers hold no SOL. The gas
+// wallet takes slot 0 instead — it is already a writable signer on a create (we pass it as `payer`), so those
+// two slots swap; a cancel never names it, so it goes in front and every account index shifts by one. Any
+// associated-token-account it opens on the way is billed to the same wallet.
+export function gasPays(tx: VersionedTransaction, gas: PublicKey): VersionedTransaction {
+  const m = tx.message as MessageV0;
+  const g = m.staticAccountKeys.findIndex((k) => k.equals(gas));
+  const keys = g < 0 ? [gas, ...m.staticAccountKeys] : [...m.staticAccountKeys];
+  if (g > 0) [keys[0], keys[g]] = [keys[g]!, keys[0]!];
+  const move = g < 0 ? (i: number) => i + 1 : (i: number) => (i === 0 ? g : i === g ? 0 : i);
+  return new VersionedTransaction(
+    new MessageV0({
+      header: g < 0 ? { ...m.header, numRequiredSignatures: m.header.numRequiredSignatures + 1 } : m.header,
+      staticAccountKeys: keys,
+      recentBlockhash: m.recentBlockhash,
+      compiledInstructions: m.compiledInstructions.map((ix) => {
+        const accountKeyIndexes = ix.accountKeyIndexes.map(move);
+        if (keys[move(ix.programIdIndex)]!.equals(ATA_PROGRAM)) accountKeyIndexes[0] = 0;
+        return { ...ix, programIdIndex: move(ix.programIdIndex), accountKeyIndexes };
+      }),
+      addressTableLookups: m.addressTableLookups,
+    }),
+  );
+}

@@ -1,7 +1,17 @@
 import type { Env } from "../env";
 import type { Sql } from "../lib/db";
 import { HttpError, badRequest, notFound } from "../lib/errors";
-import { USDC_MINT, gasKeypair, sha256hex, connection, ata } from "../lib/solana";
+import {
+  USDC_MINT,
+  referralAta,
+  gasKeypair,
+  sha256hex,
+  connection,
+  ata,
+  gasPays,
+  ATA_RENT_LAMPORTS,
+  TOKEN_2022_PROGRAM,
+} from "../lib/solana";
 import { ordersRepo, type OrderRow } from "../repos/orders";
 import { swapsRepo } from "../repos/swaps";
 import { solPrice as solUsd } from "../lib/rpc";
@@ -86,6 +96,17 @@ async function requireUsdc(env: Env, wallet: string, needed: number) {
     });
 }
 
+// A first buy of a stonk has to open the maker's token account. Jupiter bills that to the maker, who holds no
+// SOL, so the gas wallet pays it on chain and the escrow carries it back to us.
+async function ataRent(env: Env, wallet: string, mint: string) {
+  const [owner, m] = [new PublicKey(wallet), new PublicKey(mint)];
+  const infos = await connection(env).getMultipleAccountsInfo([
+    ata(owner, m),
+    ata(owner, m, TOKEN_2022_PROGRAM),
+  ]);
+  return infos.some((i) => i) ? 0 : ATA_RENT_LAMPORTS;
+}
+
 const ownWallet = (wallets: WalletRow[], address: string) => {
   if (!wallets.some((w) => w.address === address && w.chain === "solana"))
     throw new HttpError(403, "wallet is not one of yours");
@@ -93,13 +114,13 @@ const ownWallet = (wallets: WalletRow[], address: string) => {
 
 // Every rule the order sheet needs, so the phone never has to hardcode one or learn it from a refusal.
 export async function orderConfig(sql: Sql) {
-  const [minUsd, sol] = await Promise.all([configNum(sql, "orders.min_usd", MIN_ORDER_USD), solUsd()]);
+  const minUsd = await configNum(sql, "orders.min_usd", MIN_ORDER_USD);
   return {
     minUsd,
     maxOpen: MAX_OPEN,
-    buyFeeBps: FEE_BPS,
-    sellFeeBps: 0,
-    accountCostUsd: sol ? Math.ceil((ORDER_RENT_LAMPORTS / 1e9) * sol * 100) / 100 : null,
+    buyFeeBps: 0,
+    sellFeeBps: FEE_BPS,
+    accountCostUsd: 0,
     excludedIssuers: EXCLUDED_ISSUERS,
   };
 }
@@ -132,30 +153,33 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
       : Math.round(displayed(making) * q.triggerUsd * 1e6);
   if (taking <= 0) throw badRequest("trigger price is too far from the amount");
 
-  const sol = await solUsd();
-  const feeUsd = q.side === "buy" ? Math.round(orderUsd * FEE_BPS) / 10_000 : 0;
-  // A buy escrows the order plus its costs, so the user receives exactly what they typed and gets every cent
-  // back if it never fills. Jupiter takes its cut out of the input, so the rate is against the escrow.
-  const rentUsd = q.side === "buy" && sol ? Math.ceil((ORDER_RENT_LAMPORTS / 1e9) * sol * 100) / 100 : 0;
-  const escrow = q.side === "buy" ? making + Math.round((feeUsd + rentUsd) * 1e6) : making;
-  const feeBps = q.side === "buy" ? Math.ceil(((feeUsd + rentUsd) / (escrow / 1e6)) * 10_000) : 0;
-  if (q.side === "buy") await requireUsdc(env, q.wallet, escrow);
+  // Jupiter takes its cut out of the mint the order pays OUT, and the referral program cannot hold a
+  // Token-2022 stonk: only a sell, which pays out USDC, can carry a fee. A buy is free and we eat its rent.
+  const [sol, ataLamports] = await Promise.all([
+    solUsd(),
+    q.side === "buy" ? ataRent(env, q.wallet, q.mint) : 0,
+  ]);
+  const feeBps = q.side === "sell" ? FEE_BPS : 0;
+  const feeUsd = feeBps ? Math.round(orderUsd * feeBps) / 10_000 : 0;
+  const rentUsd = sol ? Math.ceil(((ORDER_RENT_LAMPORTS + ataLamports) / 1e9) * sol * 100) / 100 : 0;
+  if (q.side === "buy") await requireUsdc(env, q.wallet, making);
 
+  const gas = gasKeypair(env).publicKey;
   const built = await trigger<{ order: string; requestId: string; transaction: string }>(env, "createOrder", {
     inputMint: q.side === "buy" ? USDC_MINT : q.mint,
     outputMint: q.side === "buy" ? q.mint : USDC_MINT,
     maker: q.wallet,
-    payer: gasKeypair(env).publicKey.toBase58(),
-    ...(feeBps ? { feeAccount: env.JUP_REFERRAL_ACCOUNT } : {}),
+    payer: gas.toBase58(),
+    ...(feeBps ? { feeAccount: referralAta(env.JUP_REFERRAL_ACCOUNT, USDC_MINT) } : {}),
     params: {
-      makingAmount: String(escrow),
+      makingAmount: String(making),
       takingAmount: String(taking),
       ...(feeBps ? { feeBps: String(feeBps) } : {}),
     },
     computeUnitPrice: "auto",
   });
 
-  const tx = VersionedTransaction.deserialize(Buffer.from(built.transaction, "base64"));
+  const tx = gasPays(VersionedTransaction.deserialize(Buffer.from(built.transaction, "base64")), gas);
   const t = Math.floor(Date.now() / 1000);
   await ordersRepo.insert(sql, {
     id: built.order,
@@ -166,7 +190,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     side: q.side,
     input_mint: q.side === "buy" ? USDC_MINT : q.mint,
     output_mint: q.side === "buy" ? q.mint : USDC_MINT,
-    making_raw: String(escrow),
+    making_raw: String(making),
     taking_raw: String(taking),
     making_usd: orderUsd,
     trigger_usd: q.triggerUsd,
@@ -177,22 +201,20 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   });
   return {
     id: built.order,
-    transaction: built.transaction,
+    transaction: Buffer.from(tx.serialize()).toString("base64"),
     side: q.side,
     symbol: stock.symbol,
-    escrowRaw: String(escrow),
+    escrowRaw: String(making),
     takingRaw: String(taking),
     orderUsd,
-    escrowUsd: q.side === "buy" ? escrow / 1e6 : null,
+    escrowUsd: q.side === "buy" ? making / 1e6 : null,
     triggerUsd: q.triggerUsd,
     fee: {
-      bps: feeBps ? FEE_BPS : 0,
+      bps: feeBps,
       usd: feeUsd,
-      rentUsd,
-      totalUsd: Math.round((feeUsd + rentUsd) * 100) / 100,
       when: feeBps
-        ? "on fill — cancel and nothing is charged"
-        : "sell orders carry no fee yet: our referral account only exists for USDC",
+        ? "taken from the proceeds when it fills — cancel and nothing is charged"
+        : "buy orders are free: we cover the on-chain cost of the order",
     },
   };
 }
@@ -215,20 +237,33 @@ export async function submitOrder(env: Env, sql: Sql, user: UserRow, id: string,
   const [row] = await ordersRepo.byId(sql, id, user.id);
   if (!row) throw notFound("order");
   if (row.status !== "quoted") throw new HttpError(409, `order already ${row.status}`);
-  const tx = await signedByUser(signedTransaction, row.wallet, row.msg_hash);
-  tx.sign([gasKeypair(env)]);
   const t = Math.floor(Date.now() / 1000);
   try {
-    const res = await trigger<{ signature: string }>(env, "execute", {
-      requestId: row.request_id,
-      signedTransaction: Buffer.from(tx.serialize()).toString("base64"),
-    });
-    await ordersRepo.markOpen(sql, row.id, res.signature, t);
-    return { id: row.id, status: "open" as const, signature: res.signature };
+    const signature = await send(env, signedTransaction, row);
+    await ordersRepo.markOpen(sql, row.id, signature, t);
+    return { id: row.id, status: "open" as const, signature };
   } catch (e) {
+    if (e instanceof HttpError) throw e;
     const msg = (e as Error).message.slice(0, 300);
     await ordersRepo.markFailed(sql, row.id, msg, t);
     throw new HttpError(422, msg);
+  }
+}
+
+// We rewrote the fee payer, so Jupiter's execute would no longer recognise its own transaction: we broadcast.
+async function send(env: Env, signedTransaction: string, row: OrderRow) {
+  const tx = await signedByUser(signedTransaction, row.wallet, row.msg_hash);
+  tx.sign([gasKeypair(env)]);
+  try {
+    return await connection(env).sendRawTransaction(tx.serialize(), {
+      skipPreflight: false,
+      maxRetries: 3,
+      preflightCommitment: "confirmed",
+    });
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/blockhash not found/i.test(msg)) throw new HttpError(410, "quote_expired");
+    throw e;
   }
 }
 
@@ -241,7 +276,10 @@ export async function cancelOrder(env: Env, sql: Sql, user: UserRow, id: string)
     order: row.id,
     computeUnitPrice: "auto",
   });
-  const tx = VersionedTransaction.deserialize(Buffer.from(built.transaction, "base64"));
+  const tx = gasPays(
+    VersionedTransaction.deserialize(Buffer.from(built.transaction, "base64")),
+    gasKeypair(env).publicKey,
+  );
   await ordersRepo.setPending(
     sql,
     row.id,
@@ -249,19 +287,14 @@ export async function cancelOrder(env: Env, sql: Sql, user: UserRow, id: string)
     await sha256hex(tx.message.serialize()),
     Math.floor(Date.now() / 1000),
   );
-  return { id: row.id, transaction: built.transaction };
+  return { id: row.id, transaction: Buffer.from(tx.serialize()).toString("base64") };
 }
 
 export async function submitCancel(env: Env, sql: Sql, user: UserRow, id: string, signedTransaction: string) {
   const [row] = await ordersRepo.byId(sql, id, user.id);
   if (!row) throw notFound("order");
   if (row.status !== "open") throw new HttpError(409, `order is ${row.status}`);
-  const tx = await signedByUser(signedTransaction, row.wallet, row.msg_hash);
-  tx.sign([gasKeypair(env)]);
-  await trigger(env, "execute", {
-    requestId: row.request_id,
-    signedTransaction: Buffer.from(tx.serialize()).toString("base64"),
-  });
+  await send(env, signedTransaction, row);
   const t = Math.floor(Date.now() / 1000);
   await ordersRepo.settle(sql, row.id, "cancelled", row.fill_usd, row.fee_usd, t);
   return { id: row.id, status: "cancelled" as const };
