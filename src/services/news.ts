@@ -119,14 +119,81 @@ async function resolve(url: string): Promise<string | null> {
   return /(^|\.)news\.google\.com$/.test(host) ? `${clean}${clean.includes("?") ? "&" : "?"}ucbcb=1` : clean;
 }
 
-const PLACEHOLDER = /yahoo_finance|s\.yimg\.com\/rz\/stage|default|placeholder|logo\.png/i;
+const PLACEHOLDER = /yahoo_finance|s\.yimg\.com\/rz\/stage|default|placeholder|logo\.png|sprite|blank\./i;
 const articleImage = (u: string | null) => (u && !PLACEHOLDER.test(u) ? u : null);
+
+// Feeds hand us the publisher's logo or nothing, so the real picture comes from the article's own og:image.
+// No accept header: asking for text/html gets Yahoo's trimmed page, which has no og tags at all.
+// Only the head is read, capped at 250KB: Yahoo buries og:image 100KB deep behind inline script.
+const OG =
+  /<meta[^>]+(?:property|name)=["'](?:og:image(?::url)?|twitter:image(?::src)?)["'][^>]+content=["']([^"']+)["']/i;
+const OG_REV =
+  /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image(?::url)?|twitter:image(?::src)?)["']/i;
+export async function ogImage(url: string): Promise<string | null> {
+  if (/(^|\.)news\.google\.com$/.test(new URL(url).hostname)) return null;
+  const r = await fetch(url, { headers: { "user-agent": UA } }).catch(() => null);
+  if (!r?.ok || !r.body) return null;
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let html = "";
+  try {
+    while (html.length < 250_000) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      html += dec.decode(value, { stream: true });
+      if (/<\/head>/i.test(html)) break;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+  const hit = OG.exec(html)?.[1] ?? OG_REV.exec(html)?.[1];
+  if (!hit) return null;
+  try {
+    return articleImage(new URL(hit, url).toString());
+  } catch {
+    return null;
+  }
+}
+
+const SOURCE_ALIASES: Record<string, string> = {
+  seekingalpha: "Seeking Alpha",
+  yahoofinance: "Yahoo Finance",
+  finance: "Yahoo Finance",
+  investorsbusinessdaily: "Investor's Business Daily",
+  thestreet: "TheStreet",
+  businessinsider: "Business Insider",
+  marketwatch: "MarketWatch",
+  cnbc: "CNBC",
+  wsj: "WSJ",
+  "247wallst": "24/7 Wall St",
+};
+// "Law360" and "law360.com" are one publisher; strip the domain suffix and settle on one spelling.
+export const cleanSource = (s: string) => {
+  const bare = s
+    .trim()
+    .replace(/^www\./i, "")
+    .replace(/\.(com|net|org|co|io|news|xyz|us|uk)$/i, "");
+  const key = bare.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return SOURCE_ALIASES[key] ?? bare.replace(/^\w/, (c) => c.toUpperCase());
+};
+
+export const titleKey = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+// Outlets rewrite the same headline ("seeks CFTC OK" vs "seeks CFTC approval"), so an exact key is not enough.
+// Containment rather than Jaccard, because a longer headline should still match the shorter one it restates.
+export const words = (t: string) => new Set(t.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []);
+export const sameStory = (a: Set<string>, b: Set<string>) => {
+  if (a.size < 5 || b.size < 5) return false;
+  let hit = 0;
+  for (const w of a) if (b.has(w)) hit++;
+  return hit >= 4 && hit / Math.min(a.size, b.size) >= 0.6;
+};
 
 const outlet = (url: string, source: string | null) => {
   const host = new URL(url).hostname.replace(/^www\./, "");
   if (/finance\.yahoo/.test(host)) return "Yahoo Finance";
   return source && !/^yahoo$/i.test(source)
-    ? source
+    ? cleanSource(source)
     : host
         .split(".")
         .slice(-2, -1)[0]!
@@ -279,6 +346,7 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
     let raws = ticker && env.FINNHUB_KEY ? await finnhub(env, ticker) : [];
     if (!raws.length) raws = await google(s.name);
     const seen = new Set<string>();
+    const recent = await newsRepo.recentTitles(sql, s.mint, t - 2 * 86400);
     let fetched = 0;
     for (const n of raws.sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 12)) {
       const title = n.title.trim();
@@ -287,6 +355,15 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
       if (++fetched > 6) break;
       const url = await resolve(n.url);
       if (!url) continue;
+      // A second outlet running the same headline is the same story: tag the stock onto the row we have.
+      const key = titleKey(title);
+      const [exact] = await newsRepo.byTitleKey(sql, key, t - 7 * 86400);
+      const w = words(title);
+      const near = exact ?? recent.find((r) => sameStory(w, words(r.title)));
+      if (near) {
+        await newsRepo.tag(sql, near.id, s.mint, 1);
+        continue;
+      }
       const id = (await sha256hex(new TextEncoder().encode(url))).slice(0, 32);
       const [row] = await newsRepo.upsert(sql, {
         id,
@@ -294,7 +371,8 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
         summary: n.summary,
         source: outlet(url, n.source),
         url,
-        image: articleImage(n.image),
+        image: articleImage(n.image) ?? (await ogImage(url)),
+        titleKey: key,
         publishedAt: n.publishedAt,
         t,
       });

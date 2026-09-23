@@ -35,15 +35,28 @@ export const newsRepo = {
       source: string | null;
       url: string;
       image: string | null;
+      titleKey: string;
       publishedAt: number;
       t: number;
     },
   ) =>
     sql<
       { id: string; inserted: boolean }[]
-    >`INSERT INTO news (id, title, summary, source, url, image, published_at, fetched_at)
-      VALUES (${n.id}, ${n.title}, ${n.summary}, ${n.source}, ${n.url}, ${n.image}, ${n.publishedAt}, ${n.t})
-      ON CONFLICT (url) DO UPDATE SET title = EXCLUDED.title RETURNING id, (xmax = 0) AS inserted`,
+    >`INSERT INTO news (id, title, summary, source, url, image, title_key, published_at, fetched_at)
+      VALUES (${n.id}, ${n.title}, ${n.summary}, ${n.source}, ${n.url}, ${n.image}, ${n.titleKey}, ${n.publishedAt}, ${n.t})
+      ON CONFLICT (url) DO UPDATE SET title = EXCLUDED.title, image = COALESCE(news.image, EXCLUDED.image)
+      RETURNING id, (xmax = 0) AS inserted`,
+  // The same story from a second outlet is the same story: reuse the row we already have.
+  byTitleKey: (sql: Sql, titleKey: string, since: number) =>
+    sql<{ id: string }[]>`SELECT id FROM news WHERE title_key = ${titleKey} AND published_at > ${since}
+      ORDER BY published_at LIMIT 1`,
+  recentTitles: (sql: Sql, mint: string, since: number) =>
+    sql<
+      { id: string; title: string }[]
+    >`SELECT n.id, n.title FROM news n JOIN news_stocks ns ON ns.news_id = n.id
+      WHERE ns.mint = ${mint} AND n.published_at > ${since}`,
+  setImage: (sql: Sql, id: string, image: string) =>
+    sql`UPDATE news SET image = ${image} WHERE id = ${id} AND image IS NULL`,
   tag: (sql: Sql, newsId: string, mint: string, relevance: number) =>
     sql`INSERT INTO news_stocks (news_id, mint, relevance) VALUES (${newsId}, ${mint}, ${relevance}) ON CONFLICT DO NOTHING`,
   score: (
@@ -73,12 +86,14 @@ export const newsRepo = {
                           published_at, impact, direction, confidence FROM (
       SELECT n.id, ns.mint, s.symbol, s.name, s.logo, s.price_usd, s.change_24h, n.title, n.summary, n.source, n.url, n.image,
              n.published_at, n.impact, n.direction, n.confidence,
-             row_number() OVER (PARTITION BY ns.mint ORDER BY n.published_at DESC) AS rn
+             row_number() OVER (PARTITION BY ns.mint ORDER BY n.published_at DESC) AS rn,
+             -- one article can name two companies; the merged feed shows it once, under the stock that matters most here
+             row_number() OVER (PARTITION BY n.id ORDER BY ${a.mints.length ? sql`(ns.mint IN ${sql(a.mints)}) DESC,` : sql``} ns.relevance DESC, s.symbol) AS dup
       FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
       WHERE NOT n.junk AND NOT s.excluded AND n.impact IS NOT NULL AND n.impact >= ${a.minImpact}
         AND n.published_at > ${Math.floor(Date.now() / 1000) - 7 * 86400}
         ${a.before ? sql`AND n.published_at < ${a.before}` : sql``}) x
-      WHERE rn <= ${a.perStock}
+      WHERE rn <= ${a.perStock} AND dup = 1
       ORDER BY ${a.mints.length ? sql`(mint IN ${sql(a.mints)}) DESC,` : sql``} published_at DESC LIMIT ${a.limit}`,
   prune: (sql: Sql, before: number) => sql`DELETE FROM news WHERE published_at < ${before}`,
   stocksForNews: (sql: Sql) =>
