@@ -222,9 +222,12 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   // We front every lamport this order costs, and Jupiter refunds the deposit to the maker, not to us. So the
   // maker pays it here in USDC and gets it back in SOL when the order closes: square on both sides.
   const sameMint = ataLamports ? await ordersRepo.openForMint(sql, user.id, q.mint) : [];
-  const rentLamports = ORDER_RENT_LAMPORTS + (sameMint.length ? 0 : ataLamports);
-  const chargeRaw = buy && sol ? BigInt(Math.ceil((rentLamports / 1e9) * sol * 1e6)) : 0n;
-  if (buy) await requireUsdc(env, q.wallet, making + Number(chargeRaw));
+  // Priced apart so the ticket can show them apart, and summed so the two rows always equal the total.
+  const rentRaw = (l: number) => (buy && sol ? Math.ceil((l / 1e9) * sol * 1e6) : 0);
+  const depositRaw = rentRaw(ORDER_RENT_LAMPORTS);
+  const accountRaw = sameMint.length ? 0 : rentRaw(ataLamports);
+  const chargeRaw = BigInt(depositRaw + accountRaw);
+  if (buy) await requireUsdc(env, q.wallet, making + depositRaw + accountRaw);
 
   const gas = gasKeypair(env).publicKey;
   const built = await trigger<{ order: string; requestId: string; transaction: string }>(env, "createOrder", {
@@ -279,6 +282,8 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     escrowUsd: q.side === "buy" ? making / 1e6 : null,
     triggerUsd: q.triggerUsd,
     costUsd: rentUsd,
+    depositUsd: depositRaw / 1e6,
+    accountUsd: accountRaw / 1e6,
     totalUsd: making / 1e6 + rentUsd,
     fee: {
       bps: feeBps,
