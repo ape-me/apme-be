@@ -38,7 +38,8 @@ const MIN_GAP_BPS = 0;
 // Jupiter's order account (372 bytes) plus its escrow. Measured on chain; the refund goes to the maker on
 // fill, never to whoever paid it, so it is a real cost to us unless the order carries it.
 const ORDER_RENT_LAMPORTS = 4_030_000;
-// Nothing should sit on a user's money forever: Jupiter closes the order and returns everything.
+// Nothing should sit on a user's money forever. Live value is the app_config key `orders.ttl_days`, so the
+// expiry can be cut to minutes to watch what Jupiter actually does at the deadline.
 const ORDER_TTL_DAYS = 30;
 // Jupiter refuses any mint with a transfer fee, which today is every PreStocks name.
 const EXCLUDED_ISSUERS = ["prestocks"];
@@ -123,14 +124,15 @@ const ownWallet = (wallets: WalletRow[], address: string) => {
 
 // Every rule the order sheet needs, so the phone never has to hardcode one or learn it from a refusal.
 export async function orderConfig(sql: Sql) {
-  const [minUsd, minGapBps] = await Promise.all([
+  const [minUsd, minGapBps, ttlDays] = await Promise.all([
     configNum(sql, "orders.min_usd", MIN_ORDER_USD),
     configNum(sql, "orders.min_gap_bps", MIN_GAP_BPS),
+    configNum(sql, "orders.ttl_days", ORDER_TTL_DAYS),
   ]);
   return {
     minUsd,
     minGapBps,
-    ttlDays: ORDER_TTL_DAYS,
+    ttlDays,
     maxOpen: MAX_OPEN,
     buyFeeBps: 0,
     sellFeeBps: FEE_BPS,
@@ -190,10 +192,12 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   const displayed = (raw: number) => (raw / 10 ** dec) * mult;
   const spot = Number(stock.price_usd ?? 0);
   const orderUsd = q.side === "buy" ? making / 1e6 : displayed(making) * spot;
-  const [minUsd, minGapBps] = await Promise.all([
+  const [minUsd, minGapBps, ttlDays] = await Promise.all([
     configNum(sql, "orders.min_usd", MIN_ORDER_USD),
     configNum(sql, "orders.min_gap_bps", MIN_GAP_BPS),
+    configNum(sql, "orders.ttl_days", ORDER_TTL_DAYS),
   ]);
+  const expiresAt = Math.floor(Date.now() / 1000) + Math.round(ttlDays * 86_400);
   if (orderUsd < minUsd) throw new HttpError(400, `orders start at $${minUsd}`, { minUsd });
   // A trigger already in the money is a market order in disguise: it fills on the next keeper pass and
   // skips the swap fee. A limit order waits for a price that has not happened yet.
@@ -242,7 +246,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     params: {
       makingAmount: String(making),
       takingAmount: String(taking),
-      expiredAt: String(Math.floor(Date.now() / 1000) + ORDER_TTL_DAYS * 86_400),
+      expiredAt: String(expiresAt),
       ...(feeBps ? { feeBps: String(feeBps) } : {}),
     },
     computeUnitPrice: "auto",
@@ -285,7 +289,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     orderUsd,
     escrowUsd: q.side === "buy" ? making / 1e6 : null,
     triggerUsd: q.triggerUsd,
-    expiresAt: Math.floor(Date.now() / 1000) + ORDER_TTL_DAYS * 86_400,
+    expiresAt,
     costUsd: rentUsd,
     depositUsd: depositRaw / 1e6,
     accountUsd: accountRaw / 1e6,
