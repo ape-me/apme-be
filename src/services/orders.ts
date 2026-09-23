@@ -4,6 +4,7 @@ import { HttpError, badRequest, notFound } from "../lib/errors";
 import { USDC_MINT, gasKeypair, sha256hex } from "../lib/solana";
 import { ordersRepo, type OrderRow } from "../repos/orders";
 import { swapsRepo } from "../repos/swaps";
+import { solPrice as solUsd } from "../lib/rpc";
 import { accountRepo } from "../repos/account";
 import { jupBase, jupHeaders, signedByUser } from "./swap";
 import type { UserRow, WalletRow } from "../repos/account";
@@ -12,8 +13,12 @@ import { VersionedTransaction } from "@solana/web3.js";
 // Limit orders live in Jupiter's Trigger program: they hold the escrow and their keepers fill it. We build,
 // take the signature, and keep our own row so the order has a user, a symbol and a cost basis.
 
-const FEE_BPS = 100;
+const FEE_BPS = 150;
 const MAX_OPEN = 20;
+const MIN_ORDER_USD = 10;
+// Jupiter's order account (372 bytes) plus its escrow. Measured on chain; the refund goes to the maker on
+// fill, never to whoever paid it, so it is a real cost to us unless the order carries it.
+const ORDER_RENT_LAMPORTS = 4_030_000;
 
 export type OrderInput = {
   wallet: string;
@@ -60,6 +65,7 @@ const shape = (o: OrderRow) => ({
   filledAt: o.filled_at == null ? null : Number(o.filled_at),
   fillUsd: o.fill_usd,
   feeUsd: o.fee_usd,
+  rentUsd: o.rent_usd,
   error: o.error,
 });
 
@@ -85,11 +91,18 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   // priceUsd is per displayed unit, so a raw amount converts through both the decimals and the multiplier.
   const displayed = (raw: number) => (raw / 10 ** dec) * mult;
   const makingUsd = q.side === "buy" ? making / 1e6 : displayed(making) * Number(stock.price_usd ?? 0);
+  if (makingUsd < MIN_ORDER_USD) throw badRequest(`orders start at $${MIN_ORDER_USD}`);
   const taking =
     q.side === "buy"
       ? Math.round((making / 1e6 / q.triggerUsd / mult) * 10 ** dec)
       : Math.round(displayed(making) * q.triggerUsd * 1e6);
   if (taking <= 0) throw badRequest("trigger price is too far from the amount");
+
+  // The rent rides on the order's own fee, so Jupiter collects it for us when the order fills.
+  const sol = await solUsd();
+  const rentUsd = sol ? Math.ceil((ORDER_RENT_LAMPORTS / 1e9) * sol * 100) / 100 : 0;
+  const rentBps = Math.ceil((rentUsd / makingUsd) * 10_000);
+  const feeBps = FEE_BPS + rentBps;
 
   const built = await trigger<{ order: string; requestId: string; transaction: string }>(env, "createOrder", {
     inputMint: q.side === "buy" ? USDC_MINT : q.mint,
@@ -120,6 +133,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     taking_raw: String(taking),
     making_usd: makingUsd,
     trigger_usd: q.triggerUsd,
+    rent_usd: rentUsd,
     request_id: built.requestId,
     msg_hash: await sha256hex(tx.message.serialize()),
     t,
@@ -133,7 +147,14 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     takingRaw: String(taking),
     makingUsd,
     triggerUsd: q.triggerUsd,
-    fee: { bps: FEE_BPS, note: "charged by Jupiter on fill" },
+    fee: {
+      bps: FEE_BPS,
+      usd: Math.round(makingUsd * FEE_BPS) / 10_000,
+      rentUsd,
+      totalBps: feeBps,
+      totalUsd: Math.round(makingUsd * feeBps) / 10_000,
+      note: "1.5% plus the on-chain account cost, taken by Jupiter when the order fills",
+    },
   };
 }
 

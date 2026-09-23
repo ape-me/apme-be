@@ -14,6 +14,7 @@ export type OrderRow = {
   making_usd: number | null;
   trigger_usd: number | null;
   status: "quoted" | "open" | "filled" | "cancelled" | "failed";
+  rent_usd: number | null;
   request_id: string | null;
   msg_hash: string | null;
   signature: string | null;
@@ -39,6 +40,7 @@ export type NewOrder = Pick<
   | "taking_raw"
   | "making_usd"
   | "trigger_usd"
+  | "rent_usd"
   | "request_id"
   | "msg_hash"
 > & { t: number };
@@ -46,10 +48,10 @@ export type NewOrder = Pick<
 export const ordersRepo = {
   insert: (sql: Sql, o: NewOrder) =>
     sql`INSERT INTO orders (id, user_id, wallet, mint, symbol, side, input_mint, output_mint, making_raw,
-                            taking_raw, making_usd, trigger_usd, status, request_id, msg_hash, created_at, updated_at)
+                            taking_raw, making_usd, trigger_usd, rent_usd, status, request_id, msg_hash, created_at, updated_at)
         VALUES (${o.id}, ${o.user_id}, ${o.wallet}, ${o.mint}, ${o.symbol}, ${o.side}, ${o.input_mint},
                 ${o.output_mint}, ${o.making_raw}, ${o.taking_raw}, ${o.making_usd}, ${o.trigger_usd},
-                'quoted', ${o.request_id}, ${o.msg_hash}, ${o.t}, ${o.t})
+                ${o.rent_usd}, 'quoted', ${o.request_id}, ${o.msg_hash}, ${o.t}, ${o.t})
         ON CONFLICT (id) DO NOTHING`,
   byId: (sql: Sql, id: string, userId: string) =>
     sql<OrderRow[]>`SELECT * FROM orders WHERE id = ${id} AND user_id = ${userId}`,
