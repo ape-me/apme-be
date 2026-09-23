@@ -104,7 +104,7 @@ app.route("/ws", ws);
 app.notFound((c) => c.json({ error: "not found", requestId: c.req.header("cf-ray") ?? "" }, 404));
 app.onError((e, c) => {
   if (e instanceof HttpError)
-    return c.json({ error: e.message, requestId: c.req.header("cf-ray") ?? "" }, e.status as 400);
+    return c.json({ error: e.message, ...e.data, requestId: c.req.header("cf-ray") ?? "" }, e.status as 400);
   console.error(e);
   return c.json({ error: "internal", requestId: c.req.header("cf-ray") ?? "" }, 500);
 });

@@ -6,7 +6,6 @@ import {
   USDC_MINT,
   SOL_MINT,
   TOKEN_PROGRAM,
-  TOKEN_2022_PROGRAM,
   ATA_PROGRAM,
   ATA_RENT_LAMPORTS,
   connection,
@@ -101,14 +100,14 @@ async function buildTx(
   const taker = new PublicKey(q.taker);
   const conn = connection(env);
 
-  // Buys: the typed amount is the total debit, so fee and rent come out of it before the swap.
+  // Buys: the typed amount is what the user receives. Our fee and the one-off account rent go on top, and
+  // the sheet shows the total before they sign. Sells are unchanged: the fee comes off the proceeds.
   const tokenPk = new PublicKey(tokenMint);
-  const [[stockRows, memeRows], solUsdNow, tokenAtas, issuerFeeBps] = await Promise.all([
+  const usdcPk = new PublicKey(USDC_MINT);
+  const [[stockRows, memeRows], solUsdNow, usdcInfo, issuerFeeBps] = await Promise.all([
     Promise.all([swapsRepo.stockMeta(sql, tokenMint), swapsRepo.tokenMeta(sql, tokenMint)]),
     solUsd(),
-    side === "buy"
-      ? conn.getMultipleAccountsInfo([ata(taker, tokenPk), ata(taker, tokenPk, TOKEN_2022_PROGRAM)])
-      : Promise.resolve([]),
+    side === "buy" ? conn.getAccountInfo(ata(taker, usdcPk)) : Promise.resolve(null),
     transferFeeBps(conn, tokenPk),
   ]);
   // Jupiter quotes before the mint's own transfer fee, so the fee must sit inside the slippage or every fill misses minOut.
@@ -119,7 +118,6 @@ async function buildTx(
   const symbol = stock?.symbol ?? meme?.symbol ?? null;
   const lamportsToUsd = (l: number) => (solUsdNow ? Math.ceil((l / 1e9) * solUsdNow * 100) / 100 : 0);
   const feeOnInput = side === "buy" ? (amount * BigInt(FEE_BPS)) / 10_000n : 0n;
-  let rentLamports = side === "buy" && tokenAtas.every((a) => !a) ? ATA_RENT_LAMPORTS : 0;
 
   // Prefer direct routes for stocks (no intermediate token accounts) unless multi-hop pays >0.5% more.
   const getQuote = async (swapAmount: bigint, direct: boolean) => {
@@ -184,22 +182,30 @@ async function buildTx(
     return { jqj, ixs, setup, alts, lamports, rentMints };
   };
 
-  let rentRaw = BigInt(Math.round(lamportsToUsd(rentLamports) * 1e6));
-  let r = await route(side === "buy" ? amount - feeOnInput - rentRaw : amount);
-  if (side === "buy" && r.lamports > rentLamports) {
-    rentLamports = r.lamports;
-    rentRaw = BigInt(Math.round(lamportsToUsd(rentLamports) * 1e6));
-    r = await route(amount - feeOnInput - rentRaw);
-  }
+  // The route itself names every account it has to open, so one pass settles both the swap and the rent.
+  const r = await route(amount);
   const { jqj, ixs, setup, alts, rentMints } = r;
-  rentLamports = r.lamports;
+  const rentLamports = side === "buy" ? r.lamports : 0;
+  const rentRaw = BigInt(Math.round(lamportsToUsd(rentLamports) * 1e6));
   const rentUsd = Number(rentRaw) / 1e6;
+  const totalRaw = side === "buy" ? amount + feeOnInput + rentRaw : amount;
+  if (side === "buy") {
+    const held = usdcInfo
+      ? new DataView(usdcInfo.data.buffer, usdcInfo.data.byteOffset).getBigUint64(64, true)
+      : 0n;
+    if (held < totalRaw)
+      throw new HttpError(422, "insufficient_usdc", {
+        neededUsd: Number(totalRaw) / 1e6,
+        heldUsd: Number(held) / 1e6,
+        shortUsd: Math.ceil(Number(totalRaw - held) / 10_000) / 100,
+      });
+  }
 
   const minOut = BigInt(jqj.otherAmountThreshold);
   const feeOnOutput = side === "sell" ? (minOut * BigInt(FEE_BPS)) / 10_000n : 0n;
   const feeRaw = side === "buy" ? feeOnInput : feeOnOutput;
   const swapUsd = Number(jqj.swapUsdValue ?? 0);
-  const inUsd = side === "buy" ? Number(amount) / 1e6 : swapUsd;
+  const inUsd = side === "buy" ? Number(totalRaw) / 1e6 : swapUsd;
   const issuerFeeUsd = Math.round(swapUsd * issuerFeeBps) / 10_000;
   const outUsd =
     (side === "buy" ? swapUsd : Number(BigInt(jqj.outAmount) - feeOnOutput) / 1e6) - issuerFeeUsd;
@@ -257,6 +263,7 @@ async function buildTx(
     outputMint,
     symbol,
     amount,
+    totalRaw,
     jqj,
     minOut,
     feeRaw,
@@ -317,6 +324,7 @@ export async function quote(
     outputMint,
     symbol,
     amount,
+    totalRaw,
     jqj,
     minOut,
     feeRaw,
@@ -350,7 +358,7 @@ export async function quote(
     priority,
     gasLamports,
     rentLamports,
-    swapUsd: side === "buy" ? (Number(amount) - Number(feeRaw) - Number(b.rentRaw)) / 1e6 : inUsd,
+    swapUsd: side === "buy" ? Number(amount) / 1e6 : inUsd,
     rentUsd: b.rentUsd,
     issuerFeeUsd: b.issuerFeeUsd,
     msgHash,
@@ -371,6 +379,7 @@ export async function quote(
     multiplier: b.multiplier,
     inUsd,
     outUsd,
+    totalUsd: Number(totalRaw) / 1e6,
     priceImpactPct: Number(jqj.priceImpactPct) * 100,
     slippageBps,
     suggestedSlippageBps: Math.min(500, Math.max(50, Math.ceil(Number(jqj.priceImpactPct) * 10_000) + 50)),
@@ -387,7 +396,7 @@ export async function quote(
       note: b.rentUsd > 0 ? "one-time network fee to open the token account, charged in USDC" : null,
     },
     totalChargeUsd: (Number(feeRaw) + Number(b.rentRaw)) / 1e6,
-    swapUsd: side === "buy" ? (Number(amount) - Number(feeRaw) - Number(b.rentRaw)) / 1e6 : inUsd,
+    swapUsd: side === "buy" ? Number(amount) / 1e6 : inUsd,
     gas: { paidBy: "apeme", priority, lamports: gasLamports, rentLamports },
     premiumPct,
     markUsd: stock?.mark_usd == null ? null : Number(stock.mark_usd),
