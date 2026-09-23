@@ -20,6 +20,7 @@ import {
 import { catalog } from "../services/catalog";
 import { news, IMPACT_LEVEL } from "../services/news";
 import { insights } from "../services/insights";
+import { depth } from "../services/swap";
 import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
 import { COLLECTION_IDS } from "../services/collections";
@@ -115,6 +116,11 @@ read.get("/news", (c) =>
 read.get("/stocks/:mint/insights", (c) =>
   cached(c.req.raw, 300, async () =>
     c.json(await insights(c.env, c.get("sql"), parse(Mint, c.req.param("mint")))),
+  ),
+);
+read.get("/stocks/:mint/depth", (c) =>
+  cached(c.req.raw, 60, async () =>
+    c.json(await depth(c.env, c.get("sql"), parse(Mint, c.req.param("mint")))),
   ),
 );
 read.get("/stocks/:mint/news", (c) =>

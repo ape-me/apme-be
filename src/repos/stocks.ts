@@ -1,5 +1,8 @@
 import type { Sql } from "../lib/db";
 
+// A listing with no price or no pool left is dead: it cannot be traded, so it never reaches a card.
+const MIN_LIQUIDITY_USD = 5_000;
+
 export type StockConfig = {
   excluded: boolean;
   category: string | null;
@@ -54,7 +57,8 @@ const select = (sql: Sql, where: ReturnType<Sql>) => sql<StockRow[]>`
   LEFT JOIN stock_stats ss ON ss.mint = s.mint
   LEFT JOIN tokens kg ON kg.mint = ss.king_mint
   LEFT JOIN token_stats kst ON kst.token_mint = ss.king_mint
-  WHERE s.category <> 'crypto' AND NOT s.excluded ${where}
+  WHERE s.category <> 'crypto' AND NOT s.excluded
+        AND s.price_usd IS NOT NULL AND coalesce(s.liquidity_usd, 0) >= ${MIN_LIQUIDITY_USD} ${where}
   ORDER BY heat DESC, memes DESC, s.symbol`;
 
 export const stocksRepo = {

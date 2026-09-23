@@ -270,6 +270,30 @@ async function buildTx(
   };
 }
 
+const DEPTH_LEVELS = [100, 1_000, 10_000] as const;
+
+// What a buy of each size costs in price impact. Thin pools punish size, and the app should say so before the sheet.
+export async function depth(env: Env, sql: Sql, mint: string) {
+  const [stockRows, memeRows] = await Promise.all([
+    swapsRepo.stockMeta(sql, mint),
+    swapsRepo.tokenMeta(sql, mint),
+  ]);
+  const symbol = stockRows[0]?.symbol ?? memeRows[0]?.symbol;
+  if (symbol === undefined) throw notFound("token");
+  const levels = await Promise.all(
+    DEPTH_LEVELS.map(async (usd) => {
+      const r = await fetch(
+        `${jupBase(env)}/swap/v1/quote?inputMint=${USDC_MINT}&outputMint=${mint}&amount=${usd * 1e6}&slippageBps=100&restrictIntermediateTokens=true`,
+        { headers: jupHeaders(env) },
+      );
+      if (!r.ok) return { usd, impactPct: null };
+      const j = (await r.json()) as { priceImpactPct: string };
+      return { usd, impactPct: Math.round(Number(j.priceImpactPct) * 10_000) / 100 };
+    }),
+  );
+  return { mint, symbol, levels, asOf: now() };
+}
+
 export async function quote(
   env: Env,
   sql: Sql,
