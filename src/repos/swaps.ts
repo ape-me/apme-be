@@ -68,6 +68,31 @@ export const swapsRepo = {
                                price_impact_pct, premium_pct, priority, gas_lamports, rent_lamports, swap_usd, rent_usd, issuer_fee_usd, msg_hash, last_valid_block_height, status, created_at)
            VALUES (${s.id}, ${s.userId}, ${s.wallet}, ${s.side}, ${s.inputMint}, ${s.outputMint}, ${s.symbol}, ${s.inRaw}, ${s.outRaw}, ${s.minOutRaw}, ${s.inUsd}, ${s.outUsd},
                    ${s.feeBps}, ${s.feeRaw}, ${s.feeUsd}, ${s.priceImpactPct}, ${s.premiumPct}, ${s.priority}, ${s.gasLamports}, ${s.rentLamports}, ${s.swapUsd}, ${s.rentUsd}, ${s.issuerFeeUsd}, ${s.msgHash}, ${s.lastValidBlockHeight}, 'quoted', ${s.t})`,
+  // A limit order that filled is a trade like any other: activity, cost basis and positions all read swaps.
+  insertFill: (
+    sql: Sql,
+    s: {
+      id: string;
+      userId: string;
+      wallet: string;
+      side: "buy" | "sell";
+      inputMint: string;
+      outputMint: string;
+      symbol: string | null;
+      inRaw: string;
+      outRaw: string;
+      inUsd: number;
+      outUsd: number;
+      feeUsd: number;
+      signature: string | null;
+      t: number;
+    },
+  ) => sql`INSERT INTO swaps (id, user_id, wallet, side, input_mint, output_mint, symbol, in_raw, out_raw,
+                              in_usd, out_usd, fee_usd, swap_usd, signature, status, created_at, confirmed_at)
+           VALUES (${s.id}, ${s.userId}, ${s.wallet}, ${s.side}, ${s.inputMint}, ${s.outputMint}, ${s.symbol},
+                   ${s.inRaw}, ${s.outRaw}, ${s.inUsd}, ${s.outUsd}, ${s.feeUsd}, ${s.inUsd}, ${s.signature},
+                   'confirmed', ${s.t}, ${s.t})
+           ON CONFLICT (id) DO NOTHING`,
   byId: (sql: Sql, id: string, userId: string) =>
     sql<SwapRow[]>`SELECT * FROM swaps WHERE id = ${id} AND user_id = ${userId}`,
   bySignature: (sql: Sql, sig: string) => sql<SwapRow[]>`SELECT * FROM swaps WHERE signature = ${sig}`,

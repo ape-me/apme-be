@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import { withDb } from "../middleware/db";
+import { userRoom } from "../services/rooms";
 import { requireAuth, type AuthVars } from "../middleware/auth";
 import { parse } from "../lib/validate";
 import { notFound } from "../lib/errors";
@@ -27,6 +28,7 @@ const shapeMe = (
   wallets: WalletRow[],
   settings: SettingsRow,
   referral: { code: string; invitesLeft: number; earnedUsd: number },
+  channel: string,
 ) => ({
   userId: user.id,
   handle: user.handle,
@@ -35,6 +37,7 @@ const shapeMe = (
   wallets: wallets.map(shapeWallet),
   settings: shapeSettings(settings),
   referral,
+  channel,
   createdAt: Number(user.created_at),
 });
 
@@ -42,13 +45,19 @@ export const me = new Hono<{ Bindings: Env; Variables: AuthVars }>();
 me.use("*", withDb, requireAuth);
 
 me.get("/", async (c) => {
-  const r = await referrals(c.get("sql"), c.get("user"));
+  const [r, channel] = await Promise.all([
+    referrals(c.get("sql"), c.get("user")),
+    userRoom(c.env.INGEST_SECRET, c.get("user").id),
+  ]);
   return c.json(
-    shapeMe(c, c.get("user"), c.get("wallets"), c.get("settings"), {
-      code: r.code,
-      invitesLeft: r.invitesLeft,
-      earnedUsd: r.earnedUsd,
-    }),
+    shapeMe(
+      c,
+      c.get("user"),
+      c.get("wallets"),
+      c.get("settings"),
+      { code: r.code, invitesLeft: r.invitesLeft, earnedUsd: r.earnedUsd },
+      channel,
+    ),
   );
 });
 
@@ -59,13 +68,16 @@ me.patch("/", async (c) => {
     await c.req.json(),
   );
   const u = await updateProfile(c.get("sql"), c.get("user").id, b.handle, b.avatarUrl);
-  const r = await referrals(c.get("sql"), u);
+  const [r, channel] = await Promise.all([referrals(c.get("sql"), u), userRoom(c.env.INGEST_SECRET, u.id)]);
   return c.json(
-    shapeMe(c, u, c.get("wallets"), c.get("settings"), {
-      code: r.code,
-      invitesLeft: r.invitesLeft,
-      earnedUsd: r.earnedUsd,
-    }),
+    shapeMe(
+      c,
+      u,
+      c.get("wallets"),
+      c.get("settings"),
+      { code: r.code, invitesLeft: r.invitesLeft, earnedUsd: r.earnedUsd },
+      channel,
+    ),
   );
 });
 

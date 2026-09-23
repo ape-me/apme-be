@@ -38,6 +38,8 @@ const MIN_GAP_BPS = 0;
 // Jupiter's order account (372 bytes) plus its escrow. Measured on chain; the refund goes to the maker on
 // fill, never to whoever paid it, so it is a real cost to us unless the order carries it.
 const ORDER_RENT_LAMPORTS = 4_030_000;
+// Nothing should sit on a user's money forever: Jupiter closes the order and returns everything.
+const ORDER_TTL_DAYS = 30;
 // Jupiter refuses any mint with a transfer fee, which today is every PreStocks name.
 const EXCLUDED_ISSUERS = ["prestocks"];
 
@@ -128,6 +130,7 @@ export async function orderConfig(sql: Sql) {
   return {
     minUsd,
     minGapBps,
+    ttlDays: ORDER_TTL_DAYS,
     maxOpen: MAX_OPEN,
     buyFeeBps: 0,
     sellFeeBps: FEE_BPS,
@@ -239,6 +242,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     params: {
       makingAmount: String(making),
       takingAmount: String(taking),
+      expiredAt: String(Math.floor(Date.now() / 1000) + ORDER_TTL_DAYS * 86_400),
       ...(feeBps ? { feeBps: String(feeBps) } : {}),
     },
     computeUnitPrice: "auto",
@@ -281,6 +285,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     orderUsd,
     escrowUsd: q.side === "buy" ? making / 1e6 : null,
     triggerUsd: q.triggerUsd,
+    expiresAt: Math.floor(Date.now() / 1000) + ORDER_TTL_DAYS * 86_400,
     costUsd: rentUsd,
     depositUsd: depositRaw / 1e6,
     accountUsd: accountRaw / 1e6,
@@ -376,48 +381,73 @@ export async function submitCancel(env: Env, sql: Sql, user: UserRow, id: string
   return { id: row.id, status: "cancelled" as const };
 }
 
-// Jupiter is the truth. Anything of ours still marked open is reconciled against their active and history lists.
-export async function listOrders(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], limit: number) {
-  const open = await ordersRepo.openFor(sql, user.id);
-  if (open.length) {
-    const addresses = [...new Set(open.map((o) => o.wallet))].filter((a) =>
-      wallets.some((w) => w.address === a),
-    );
-    const pages = await Promise.all(
-      addresses.flatMap((a) =>
-        (["active", "history"] as const).map(async (status) => {
-          try {
-            const r = await trigger<{ orders: JupOrder[] }>(
-              env,
-              `getTriggerOrders?user=${a}&orderStatus=${status}`,
-            );
-            return (r.orders ?? []).map((o) => [status, o] as const);
-          } catch {
-            return [];
-          }
-        }),
-      ),
-    );
-    const seen = new Map(pages.flat().map(([status, o]) => [o.orderKey, { status, o }]));
-    const t = Math.floor(Date.now() / 1000);
-    await Promise.all(
-      open.map(async (row) => {
-        const hit = seen.get(row.id);
-        if (!hit || hit.status === "active") return;
-        const filled = (hit.o.trades?.length ?? 0) > 0;
-        const usdLeg = row.side === "buy" ? hit.o.makingAmount : hit.o.takingAmount;
-        const remaining = row.side === "buy" ? hit.o.remainingMakingAmount : hit.o.remainingTakingAmount;
-        const fillUsd = filled ? Number(usdLeg) - Number(remaining ?? 0) : null;
-        await ordersRepo.settle(
-          sql,
-          row.id,
-          filled ? "filled" : "cancelled",
-          fillUsd,
-          fillUsd == null ? null : (fillUsd * FEE_BPS) / 10_000,
-          t,
-        );
+// Jupiter is the truth: anything of ours still marked open is settled against their active and history lists.
+// A fill also becomes a swaps row, because activity, cost basis and positions all read that table.
+export async function reconcile(env: Env, sql: Sql, open: OrderRow[], wallets?: string[]) {
+  if (!open.length) return [];
+  const addresses = [...new Set(open.map((o) => o.wallet))].filter((a) => !wallets || wallets.includes(a));
+  const pages = await Promise.all(
+    addresses.flatMap((a) =>
+      (["active", "history"] as const).map(async (status) => {
+        try {
+          const r = await trigger<{ orders: JupOrder[] }>(
+            env,
+            `getTriggerOrders?user=${a}&orderStatus=${status}`,
+          );
+          return (r.orders ?? []).map((o) => [status, o] as const);
+        } catch {
+          return [];
+        }
       }),
-    );
-  }
+    ),
+  );
+  const seen = new Map(pages.flat().map(([status, o]) => [o.orderKey, { status, o }]));
+  const t = Math.floor(Date.now() / 1000);
+  const settled: { row: OrderRow; status: "filled" | "cancelled"; fillUsd: number | null }[] = [];
+  await Promise.all(
+    open.map(async (row) => {
+      const hit = seen.get(row.id);
+      if (!hit || hit.status === "active") return;
+      const { o } = hit;
+      const madeRaw = Number(o.makingAmount);
+      const part = madeRaw ? 1 - Number(o.remainingMakingAmount ?? 0) / madeRaw : 0;
+      const filled = (o.trades?.length ?? 0) > 0 && part > 0;
+      const status = filled ? ("filled" as const) : ("cancelled" as const);
+      // makingAmount is the USDC leg on a buy and the stonk leg on a sell, so value the order by our own row.
+      const fillUsd = filled ? Math.round(Number(row.making_usd ?? 0) * part * 1e6) / 1e6 : null;
+      const feeUsd = fillUsd == null || row.side === "buy" ? 0 : (fillUsd * FEE_BPS) / 10_000;
+      await ordersRepo.settle(sql, row.id, status, fillUsd, filled ? feeUsd : null, t);
+      if (filled) {
+        const scale = (raw: string) => String(BigInt(Math.round(Number(raw) * part)));
+        await swapsRepo.insertFill(sql, {
+          id: row.id,
+          userId: row.user_id,
+          wallet: row.wallet,
+          side: row.side,
+          inputMint: row.input_mint,
+          outputMint: row.output_mint,
+          symbol: row.symbol,
+          inRaw: scale(row.making_raw),
+          outRaw: scale(row.taking_raw),
+          inUsd: fillUsd ?? 0,
+          outUsd: (fillUsd ?? 0) - feeUsd,
+          feeUsd,
+          signature: row.signature,
+          t,
+        });
+      }
+      settled.push({ row, status, fillUsd });
+    }),
+  );
+  return settled;
+}
+
+export async function listOrders(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], limit: number) {
+  await reconcile(
+    env,
+    sql,
+    await ordersRepo.openFor(sql, user.id),
+    wallets.map((w) => w.address),
+  );
   return { orders: (await ordersRepo.forUser(sql, user.id, limit)).map(shape) };
 }

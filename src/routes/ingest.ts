@@ -5,7 +5,7 @@ import type { Env } from "../env";
 import { verify } from "../lib/hmac";
 import { badRequest, unauthorized } from "../lib/errors";
 import { IngestBatch, type WsMessage } from "../contract";
-import { rooms, FLOOR, STOCK } from "../services/rooms";
+import { rooms, FLOOR, STOCK, userRoom } from "../services/rooms";
 
 export const ingest = new Hono<{ Bindings: Env }>();
 
@@ -34,12 +34,15 @@ ingest.post("/trades", async (c) => {
   }
   for (const n of r.data.news) push(STOCK(n.mint), { t: "news", ...n });
   for (const p of r.data.prices) push(p.kind === "meme" ? p.mint : STOCK(p.mint), { t: "price", ...p });
+  for (const { userId, ...o } of r.data.orders)
+    push(await userRoom(c.env.INGEST_SECRET, userId), { t: "order", ...o });
   c.executionCtx.waitUntil(rooms.publish(c.env, byRoom));
   return c.json({
     ok: true,
     trades: r.data.trades.length,
     tokens: r.data.tokens.length,
     prices: r.data.prices.length,
+    orders: r.data.orders.length,
     rooms: byRoom.size,
   });
 });

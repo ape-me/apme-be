@@ -64,6 +64,9 @@ export const ordersRepo = {
   openForMint: (sql: Sql, userId: string, mint: string) =>
     sql<{ id: string }[]>`SELECT id FROM orders WHERE user_id = ${userId} AND mint = ${mint}
         AND status = 'open'`,
+  // Every live order, for the reconcile pass that runs without a phone asking.
+  allOpen: (sql: Sql, limit: number) =>
+    sql<OrderRow[]>`SELECT * FROM orders WHERE status = 'open' ORDER BY created_at LIMIT ${limit}`,
   openFor: (sql: Sql, userId: string) =>
     sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} AND status = 'open'`,
   // A cancel is a second transaction to sign, so the row carries its request and hash while it is in flight.

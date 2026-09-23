@@ -327,8 +327,21 @@ export const IngestNews = z.object({
   url: z.string(),
   publishedAt: z.number().int(),
 });
+// A limit order reached its end state. The cron sends the user; the Worker derives their private room.
+export const IngestOrder = z.object({
+  userId: z.string().max(64),
+  id: z.string().max(64),
+  mint: Mint,
+  symbol: z.string().nullable(),
+  side: z.enum(["buy", "sell"]),
+  status: z.enum(["filled", "cancelled"]),
+  fillUsd: z.number().nullable(),
+  signature: z.string().nullable(),
+});
+
 export const IngestBatch = z.object({
-  trades: z.array(IngestTrade).max(2000),
+  trades: z.array(IngestTrade).max(2000).default([]),
+  orders: z.array(IngestOrder).max(500).default([]),
   tokens: z.array(IngestToken).max(200).default([]),
   news: z.array(IngestNews).max(200).default([]),
   prices: z.array(IngestPrice).max(500).default([]),
@@ -387,7 +400,8 @@ export const WsNews = z.object({
   url: z.string(),
   publishedAt: z.number().int(),
 });
-export const WsMessage = z.discriminatedUnion("t", [WsTrade, WsNewToken, WsStats, WsPrice, WsNews]);
+export const WsOrder = z.object({ t: z.literal("order") }).merge(IngestOrder.omit({ userId: true }));
+export const WsMessage = z.discriminatedUnion("t", [WsTrade, WsNewToken, WsStats, WsPrice, WsNews, WsOrder]);
 export type WsMessage = z.infer<typeof WsMessage>;
 
 export const TickerToken = z.object({
