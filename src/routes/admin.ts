@@ -12,6 +12,7 @@ import { accountRepo } from "../repos/account";
 import { stocksRepo } from "../repos/stocks";
 import { gasInfo, simulate } from "../services/swap";
 import { simulateOrder } from "../services/orders";
+import { listConfig, setConfig } from "../services/config";
 import { ingestNews, scoreNews, jevProbe } from "../services/news";
 
 const Patch = z.object({
@@ -63,6 +64,14 @@ admin.post("/news/score", async (c) =>
 admin.post("/news/run", async (c) =>
   c.json(await ingestNews(c.env, c.get("sql"), Number(c.req.query("minute") ?? new Date().getUTCMinutes()))),
 );
+admin.get("/config", async (c) => c.json({ config: await listConfig(c.get("sql")) }));
+admin.post("/config", async (c) => {
+  const b = parse(
+    z.object({ key: z.string().min(1).max(64), value: z.string().min(1).max(200) }),
+    await c.req.json(),
+  );
+  return c.json(await setConfig(c.get("sql"), b.key, b.value));
+});
 admin.post("/order-simulate", async (c) =>
   c.json(
     await simulateOrder(
