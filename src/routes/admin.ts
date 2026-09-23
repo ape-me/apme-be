@@ -11,6 +11,7 @@ import { mintAdminCodes } from "../services/account";
 import { accountRepo } from "../repos/account";
 import { stocksRepo } from "../repos/stocks";
 import { gasInfo, simulate } from "../services/swap";
+import { simulateOrder } from "../services/orders";
 import { ingestNews, scoreNews, jevProbe } from "../services/news";
 
 const Patch = z.object({
@@ -61,6 +62,24 @@ admin.post("/news/score", async (c) =>
 );
 admin.post("/news/run", async (c) =>
   c.json(await ingestNews(c.env, c.get("sql"), Number(c.req.query("minute") ?? new Date().getUTCMinutes()))),
+);
+admin.post("/order-simulate", async (c) =>
+  c.json(
+    await simulateOrder(
+      c.env,
+      c.get("sql"),
+      parse(
+        z.object({
+          wallet: Mint,
+          mint: Mint,
+          side: z.enum(["buy", "sell"]),
+          amount: z.string().regex(/^\d+$/),
+          triggerUsd: z.number().positive(),
+        }),
+        await c.req.json(),
+      ),
+    ),
+  ),
 );
 admin.post("/swap-simulate", async (c) =>
   c.json(await simulate(c.env, c.get("sql"), parse(SimBody, await c.req.json()))),

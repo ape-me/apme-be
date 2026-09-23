@@ -14,6 +14,7 @@ export type Env = {
   GAS_WALLET_SECRET?: string; // base58 keypair of our fee payer (secret)
   FEE_WALLET?: string; // pubkey that receives the 1% (USDC)
   JUP_API_KEY?: string;
+  JUP_REFERRAL_ACCOUNT?: string;
   FINNHUB_KEY?: string;
   AI_GATEWAY_URL?: string;
   AI_GATEWAY_TOKEN?: string;

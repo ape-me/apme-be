@@ -56,6 +56,8 @@ export const accountRepo = {
       UserRow[]
     >`UPDATE users SET handle = COALESCE(${handle}, handle), avatar_url = ${avatar === undefined ? sql`avatar_url` : avatar} WHERE id = ${id} RETURNING *`,
 
+  byWallet: (sql: Sql, address: string) =>
+    sql<{ user_id: string }[]>`SELECT user_id FROM wallets WHERE address = ${address} AND chain = 'solana'`,
   wallets: (sql: Sql, userId: string) =>
     sql<WalletRow[]>`SELECT * FROM wallets WHERE user_id = ${userId} ORDER BY hd_index`,
   addWallet: (

@@ -39,8 +39,8 @@ const PRIORITY = {
 } as const;
 const TURBO_MIN_USD = 50;
 
-const jupBase = (env: Env) => (env.JUP_API_KEY ? "https://api.jup.ag" : "https://lite-api.jup.ag");
-const jupHeaders = (env: Env) => ({
+export const jupBase = (env: Env) => (env.JUP_API_KEY ? "https://api.jup.ag" : "https://lite-api.jup.ag");
+export const jupHeaders = (env: Env) => ({
   "content-type": "application/json",
   ...(env.JUP_API_KEY ? { "x-api-key": env.JUP_API_KEY } : {}),
 });
@@ -403,6 +403,25 @@ const verifyEd25519 = async (pub: Uint8Array, sig: Uint8Array, msg: Uint8Array) 
   return crypto.subtle.verify({ name: "Ed25519" }, key, u8(sig), u8(msg));
 };
 
+// A signed transaction is only ours if it is byte-for-byte the one we quoted and the user really signed it.
+export async function signedByUser(signedTransaction: string, wallet: string, msgHash: string | null) {
+  let tx: VersionedTransaction;
+  try {
+    tx = VersionedTransaction.deserialize(Buffer.from(signedTransaction, "base64"));
+  } catch {
+    throw badRequest("signedTransaction is not a valid transaction");
+  }
+  const msgBytes = tx.message.serialize();
+  if ((await sha256hex(msgBytes)) !== msgHash)
+    throw new HttpError(422, "transaction does not match the quote");
+  const keys = tx.message.staticAccountKeys;
+  const i = keys.findIndex((k) => k.toBase58() === wallet);
+  const sig = i >= 0 ? tx.signatures[i] : undefined;
+  if (!sig || sig.every((b) => b === 0) || !(await verifyEd25519(keys[i]!.toBytes(), sig, msgBytes)))
+    throw new HttpError(422, "missing or invalid user signature");
+  return tx;
+}
+
 export async function submit(
   env: Env,
   sql: Sql,
@@ -421,25 +440,7 @@ export async function submit(
   const n = Number((await swapsRepo.sponsoredLastHour(sql, user.id, t - 3600))[0]?.n ?? 0);
   if (n >= MAX_SPONSORED_PER_HOUR) throw new HttpError(429, "too many trades this hour");
 
-  let tx: VersionedTransaction;
-  try {
-    tx = VersionedTransaction.deserialize(Buffer.from(signedTransaction, "base64"));
-  } catch {
-    throw badRequest("signedTransaction is not a valid transaction");
-  }
-  const msgBytes = tx.message.serialize();
-  if ((await sha256hex(msgBytes)) !== row.msg_hash)
-    throw new HttpError(422, "transaction does not match the quote");
-  const keys = tx.message.staticAccountKeys;
-  const userIdx = keys.findIndex((k) => k.toBase58() === row.wallet);
-  const userSig = userIdx >= 0 ? tx.signatures[userIdx] : undefined;
-  if (
-    !userSig ||
-    userSig.every((b) => b === 0) ||
-    !(await verifyEd25519(keys[userIdx]!.toBytes(), userSig, msgBytes))
-  )
-    throw new HttpError(422, "missing or invalid user signature");
-
+  const tx = await signedByUser(signedTransaction, row.wallet, row.msg_hash);
   const gas = gasKeypair(env);
   tx.sign([gas]);
   const conn = connection(env);
