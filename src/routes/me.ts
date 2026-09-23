@@ -27,7 +27,7 @@ const shapeMe = (
   user: UserRow,
   wallets: WalletRow[],
   settings: SettingsRow,
-  referral: { code: string; invitesLeft: number; earnedUsd: number },
+  referral: { code: string | null; invitesLeft: number; earnedUsd: number; locked: boolean },
   channel: string,
 ) => ({
   userId: user.id,
@@ -55,7 +55,7 @@ me.get("/", async (c) => {
       c.get("user"),
       c.get("wallets"),
       c.get("settings"),
-      { code: r.code, invitesLeft: r.invitesLeft, earnedUsd: r.earnedUsd },
+      { code: r.code, invitesLeft: r.invitesLeft, earnedUsd: r.earnedUsd, locked: r.locked },
       channel,
     ),
   );
@@ -75,7 +75,7 @@ me.patch("/", async (c) => {
       u,
       c.get("wallets"),
       c.get("settings"),
-      { code: r.code, invitesLeft: r.invitesLeft, earnedUsd: r.earnedUsd },
+      { code: r.code, invitesLeft: r.invitesLeft, earnedUsd: r.earnedUsd, locked: r.locked },
       channel,
     ),
   );

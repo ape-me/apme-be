@@ -104,6 +104,9 @@ export const swapsRepo = {
     >`UPDATE swaps SET status = 'confirmed', slot = ${slot}, confirmed_at = ${t} WHERE id = ${id} AND status = 'submitted' RETURNING *`,
   markFailed: (sql: Sql, id: string, error: string) =>
     sql`UPDATE swaps SET status = 'failed', error = ${error} WHERE id = ${id} AND status IN ('quoted','submitted')`,
+  volumeFor: (sql: Sql, userId: string) =>
+    sql<{ volume_usd: number | null }[]>`SELECT SUM(in_usd) AS volume_usd FROM swaps
+      WHERE user_id = ${userId} AND status = 'confirmed'`,
   sponsoredLastHour: (sql: Sql, userId: string, since: number) =>
     sql<
       { n: number }[]

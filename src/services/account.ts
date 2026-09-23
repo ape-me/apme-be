@@ -3,6 +3,8 @@ import type { PrivyUser } from "../lib/privy";
 import { HttpError, badRequest, notFound } from "../lib/errors";
 import { pgArr } from "./collections";
 import { accountRepo, type UserRow, type WalletRow, type SettingsRow } from "../repos/account";
+import { swapsRepo } from "../repos/swaps";
+import { configNum } from "./config";
 import type { Env } from "../env";
 import { PublicKey } from "@solana/web3.js";
 import {
@@ -119,13 +121,39 @@ export async function redeemInvite(sql: Sql, userId: string, code: string) {
   if (!ok) throw new HttpError(410, "invite code used up or expired");
 }
 
+// Referrals are earned, not handed out: a user who has never traded has nothing to vouch for. The threshold
+// lives in app_config under `referral.min_volume_usd`.
+const REFERRAL_MIN_VOLUME_USD = 1000;
+
 export async function referrals(sql: Sql, user: UserRow) {
+  const [[vol], minVolumeUsd] = await Promise.all([
+    swapsRepo.volumeFor(sql, user.id),
+    configNum(sql, "referral.min_volume_usd", REFERRAL_MIN_VOLUME_USD),
+  ]);
+  const volumeUsd = Number(vol?.volume_usd ?? 0);
+  const locked = volumeUsd < minVolumeUsd;
+  if (locked)
+    return {
+      locked,
+      volumeUsd,
+      unlockAtUsd: minVolumeUsd,
+      code: null,
+      link: null,
+      invitesLeft: 0,
+      referred: [],
+      earnedUsd: 0,
+      claimableUsd: 0,
+      payouts: [],
+    };
   const [code, referred, [earn]] = await Promise.all([
     accountRepo.invite(sql, user.referral_code).then((r) => r[0]),
     accountRepo.referred(sql, user.id),
     accountRepo.earnings(sql, user.id),
   ]);
   return {
+    locked,
+    volumeUsd,
+    unlockAtUsd: minVolumeUsd,
     code: user.referral_code,
     link: `https://apeme.fun/i/${user.referral_code}`,
     invitesLeft: code ? Math.max(0, code.max_uses - code.uses) : 0,
