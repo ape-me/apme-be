@@ -191,7 +191,10 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   // priceUsd is per displayed unit, so a raw amount converts through both the decimals and the multiplier.
   const displayed = (raw: number) => (raw / 10 ** dec) * mult;
   const spot = Number(stock.price_usd ?? 0);
-  const orderUsd = q.side === "buy" ? making / 1e6 : displayed(making) * spot;
+  const buy = q.side === "buy";
+  // An order is worth what it settles for, not what the position is worth today: a sell pays out at its
+  // trigger, which is the number Jupiter measures against its own floor and the number the user was shown.
+  const orderUsd = buy ? making / 1e6 : displayed(making) * q.triggerUsd;
   const [minUsd, minGapBps, ttlDays] = await Promise.all([
     configNum(sql, "orders.min_usd", MIN_ORDER_USD),
     configNum(sql, "orders.min_gap_bps", MIN_GAP_BPS),
@@ -201,7 +204,6 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   if (orderUsd < minUsd) throw new HttpError(400, `orders start at $${minUsd}`, { minUsd });
   // A trigger already in the money is a market order in disguise: it fills on the next keeper pass and
   // skips the swap fee. A limit order waits for a price that has not happened yet.
-  const buy = q.side === "buy";
   const limitUsd = spot * (buy ? 1 - minGapBps / 10_000 : 1 + minGapBps / 10_000);
   if (spot > 0 && (buy ? q.triggerUsd >= limitUsd : q.triggerUsd <= limitUsd))
     throw new HttpError(
@@ -211,10 +213,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
         : "a limit sell has to sit above the current price — use the sell ticket to fill now",
       { spotUsd: spot, limitUsd: Math.round(limitUsd * 1e4) / 1e4, minGapBps },
     );
-  const taking =
-    q.side === "buy"
-      ? Math.round((orderUsd / q.triggerUsd / mult) * 10 ** dec)
-      : Math.round(displayed(making) * q.triggerUsd * 1e6);
+  const taking = buy ? Math.round((orderUsd / q.triggerUsd / mult) * 10 ** dec) : Math.round(orderUsd * 1e6);
   if (taking <= 0) throw badRequest("trigger price is too far from the amount");
 
   // Jupiter takes its cut out of the mint the order pays OUT, and the referral program cannot hold a
