@@ -94,6 +94,7 @@ const shape = (o: OrderRow) => {
     status: o.status,
     signature: o.signature,
     cancelSignature: o.cancel_signature,
+    expiresAt: o.expires_at == null ? null : Number(o.expires_at),
     takingQty: qty,
     filledQty: part && qty != null ? qty * part : null,
     createdAt: Number(o.created_at),
@@ -286,6 +287,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     making_usd: orderUsd,
     trigger_usd: q.triggerUsd,
     rent_usd: rentUsd,
+    expires_at: expiresAt,
     request_id: built.requestId,
     msg_hash: await sha256hex(tx.message.serialize()),
     t,
@@ -366,7 +368,7 @@ async function send(env: Env, signedTransaction: string, row: OrderRow) {
 export async function cancelOrder(env: Env, sql: Sql, user: UserRow, id: string) {
   const [row] = await ordersRepo.byId(sql, id, user.id);
   if (!row) throw notFound("order");
-  if (row.status !== "open") throw new HttpError(409, `order is ${row.status}`);
+  if (row.status !== "open" && row.status !== "expired") throw new HttpError(409, `order is ${row.status}`);
   const built = await trigger<{ requestId: string; transaction: string }>(env, "cancelOrder", {
     maker: row.wallet,
     order: row.id,
@@ -389,7 +391,7 @@ export async function cancelOrder(env: Env, sql: Sql, user: UserRow, id: string)
 export async function submitCancel(env: Env, sql: Sql, user: UserRow, id: string, signedTransaction: string) {
   const [row] = await ordersRepo.byId(sql, id, user.id);
   if (!row) throw notFound("order");
-  if (row.status !== "open") throw new HttpError(409, `order is ${row.status}`);
+  if (row.status !== "open" && row.status !== "expired") throw new HttpError(409, `order is ${row.status}`);
   const signature = await send(env, signedTransaction, row);
   await ordersRepo.markCancelled(sql, row.id, signature, Math.floor(Date.now() / 1000));
   return { id: row.id, status: "cancelled" as const, signature };
@@ -417,11 +419,19 @@ export async function reconcile(env: Env, sql: Sql, open: OrderRow[], wallets?: 
   );
   const seen = new Map(pages.flat().map(([status, o]) => [o.orderKey, { status, o }]));
   const t = Math.floor(Date.now() / 1000);
-  const settled: { row: OrderRow; status: "filled" | "cancelled"; fillUsd: number | null }[] = [];
+  const settled: { row: OrderRow; status: "filled" | "cancelled" | "expired"; fillUsd: number | null }[] = [];
   await Promise.all(
     open.map(async (row) => {
       const hit = seen.get(row.id);
-      if (!hit || hit.status === "active") return;
+      if (!hit) return;
+      // Jupiter keeps an expired order in its active list and keeps the funds: it needs a cancel to release.
+      if (hit.status === "active") {
+        if (row.expires_at && t > Number(row.expires_at) && row.status === "open") {
+          await ordersRepo.markExpired(sql, row.id, t);
+          settled.push({ row, status: "expired", fillUsd: null });
+        }
+        return;
+      }
       const { o } = hit;
       const madeRaw = Number(o.makingAmount);
       const part = madeRaw ? 1 - Number(o.remainingMakingAmount ?? 0) / madeRaw : 0;

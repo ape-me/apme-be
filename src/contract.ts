@@ -334,7 +334,7 @@ export const IngestOrder = z.object({
   mint: Mint,
   symbol: z.string().nullable(),
   side: z.enum(["buy", "sell"]),
-  status: z.enum(["filled", "cancelled"]),
+  status: z.enum(["filled", "cancelled", "expired"]),
   fillUsd: z.number().nullable(),
   signature: z.string().nullable(),
 });
