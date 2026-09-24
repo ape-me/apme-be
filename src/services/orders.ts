@@ -39,9 +39,10 @@ const MIN_GAP_BPS = 0;
 // Jupiter's order account (372 bytes) plus its escrow. Measured on chain; the refund goes to the maker on
 // fill, never to whoever paid it, so it is a real cost to us unless the order carries it.
 const ORDER_RENT_LAMPORTS = 4_030_000;
-// Nothing should sit on a user's money forever. Live value is the app_config key `orders.ttl_days`, so the
-// expiry can be cut to minutes to watch what Jupiter actually does at the deadline.
-const ORDER_TTL_DAYS = 30;
+// A deadline only ever costs the user: Jupiter keeps the escrow past it, so a lapsed order is money that
+// needs a cancel to come home. Brokers still cap a resting order so a forgotten one cannot fill on a price
+// its owner stopped wanting. Live value is `orders.ttl_days`; 0 lets an order rest until it is cancelled.
+const ORDER_TTL_DAYS = 180;
 // Jupiter refuses any mint with a transfer fee, which today is every PreStocks name.
 const EXCLUDED_ISSUERS = ["prestocks"];
 
@@ -213,7 +214,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     configNum(sql, "orders.min_gap_bps", MIN_GAP_BPS),
     configNum(sql, "orders.ttl_days", ORDER_TTL_DAYS),
   ]);
-  const expiresAt = Math.floor(Date.now() / 1000) + Math.round(ttlDays * 86_400);
+  const expiresAt = ttlDays > 0 ? Math.floor(Date.now() / 1000) + Math.round(ttlDays * 86_400) : null;
   if (orderUsd < minUsd) throw new HttpError(400, `orders start at $${minUsd}`, { minUsd });
   // A trigger already in the money is a market order in disguise: it fills on the next keeper pass and
   // skips the swap fee. A limit order waits for a price that has not happened yet.
@@ -258,7 +259,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     params: {
       makingAmount: String(making),
       takingAmount: String(taking),
-      expiredAt: String(expiresAt),
+      ...(expiresAt ? { expiredAt: String(expiresAt) } : {}),
       ...(feeBps ? { feeBps: String(feeBps) } : {}),
     },
     computeUnitPrice: "auto",
