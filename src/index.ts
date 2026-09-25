@@ -35,7 +35,7 @@ app.use("*", async (c, next) => {
 
 app.get("/", (c) =>
   c.json({
-    name: "tradestonks-be",
+    name: "stonks247-be",
     health: "/health",
     reads: [
       "/v1/ticker?stonks=10&memes=10",
@@ -82,10 +82,10 @@ app.get("/metrics", async (c) => {
     "SELECT COUNT(*) AS total, SUM(confirmed_at IS NOT NULL) AS confirmed FROM apelist",
   ).first<{ total: number; confirmed: number }>();
   const lines = [
-    "# TYPE tradestonks_apelist_signups_total gauge",
-    `tradestonks_apelist_signups_total ${r?.total ?? 0}`,
-    "# TYPE tradestonks_apelist_confirmed_total gauge",
-    `tradestonks_apelist_confirmed_total ${r?.confirmed ?? 0}`,
+    "# TYPE stonks247_apelist_signups_total gauge",
+    `stonks247_apelist_signups_total ${r?.total ?? 0}`,
+    "# TYPE stonks247_apelist_confirmed_total gauge",
+    `stonks247_apelist_confirmed_total ${r?.confirmed ?? 0}`,
   ];
   return c.text(lines.join("\n") + "\n", 200, { "content-type": "text/plain; version=0.0.4" });
 });

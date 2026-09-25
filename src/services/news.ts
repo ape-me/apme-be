@@ -7,7 +7,7 @@ import type { IngestNews } from "../contract";
 import type { z } from "zod";
 import { sha256hex } from "../lib/solana";
 
-const UA = "Mozilla/5.0 (compatible; TradeStonks/1.0)";
+const UA = "Mozilla/5.0 (compatible; Stonks247/1.0)";
 const JUNK =
   /top .*pick|\$\d[\d,]* (investment|in )|stocks? to buy|here'?s (why|my|how)|should you|millionaire|prediction|best .*stocks?|\bvs\.?\b|forget |could (double|triple)|price target/i;
 const TIER1 = [

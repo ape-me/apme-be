@@ -55,7 +55,7 @@ apelistRoute.post("/", async (c) => {
       c.env,
       email,
       token,
-      await ipHash(ip, c.env.IP_SALT ?? "tradestonks"),
+      await ipHash(ip, c.env.IP_SALT ?? "stonks247"),
       ref,
       ua,
     );
