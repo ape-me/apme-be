@@ -227,7 +227,14 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
         : "a limit sell has to sit above the current price — use the sell ticket to fill now",
       { spotUsd: spot, limitUsd: Math.round(limitUsd * 1e4) / 1e4, minGapBps },
     );
-  const taking = buy ? Math.round((orderUsd / q.triggerUsd / mult) * 10 ** dec) : Math.round(orderUsd * 1e6);
+  // Jupiter sources the fee on top of what the order demands, so a sell that asks for the full gross only
+  // fills once the price clears the trigger by the fee as well. Asking for the gross net of the fee puts the
+  // fill exactly where the user set it, and the fee comes out of the proceeds as the ticket says.
+  const feeBps = q.side === "sell" ? FEE_BPS : 0;
+  const feeUsd = feeBps ? Math.round(orderUsd * feeBps) / 10_000 : 0;
+  const taking = buy
+    ? Math.round((orderUsd / q.triggerUsd / mult) * 10 ** dec)
+    : Math.round((orderUsd - feeUsd) * 1e6);
   if (taking <= 0) throw badRequest("trigger price is too far from the amount");
 
   // Jupiter takes its cut out of the mint the order pays OUT, and the referral program cannot hold a
@@ -236,8 +243,6 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     solUsd(),
     q.side === "buy" ? ataRent(env, q.wallet, q.mint) : 0,
   ]);
-  const feeBps = q.side === "sell" ? FEE_BPS : 0;
-  const feeUsd = feeBps ? Math.round(orderUsd * feeBps) / 10_000 : 0;
 
   // We front every lamport this order costs, and Jupiter refunds the deposit to the maker, not to us. So the
   // maker pays it here in USDC and gets it back in SOL when the order closes: square on both sides.
@@ -301,6 +306,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     escrowRaw: String(making),
     takingRaw: String(taking),
     orderUsd,
+    proceedsUsd: q.side === "sell" ? orderUsd - feeUsd : null,
     escrowUsd: q.side === "buy" ? making / 1e6 : null,
     triggerUsd: q.triggerUsd,
     expiresAt,
