@@ -12,8 +12,8 @@ enabled = true
 
 [vars]
 ENV = "dev"
-ALLOWED_ORIGINS = "https://apeme.fun,https://www.apeme.fun,http://localhost:5173"
-SITE_URL = "https://apeme.fun"
+ALLOWED_ORIGINS = "https://tradestonks.fun,https://www.tradestonks.fun,https://apeme.fun,https://www.apeme.fun,http://localhost:5173"
+SITE_URL = "https://tradestonks.fun"
 PUBLIC_URL = "https://apme-be.iamjoey.workers.dev"
 PRIVY_APP_ID = "cmubdpllu01d00cl2p2q2n6h6"
 INVITE_GATE = "1"

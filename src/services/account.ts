@@ -155,7 +155,7 @@ export async function referrals(sql: Sql, user: UserRow) {
     volumeUsd,
     unlockAtUsd: minVolumeUsd,
     code: user.referral_code,
-    link: `https://apeme.fun/i/${user.referral_code}`,
+    link: `https://tradestonks.fun/i/${user.referral_code}`,
     invitesLeft: code ? Math.max(0, code.max_uses - code.uses) : 0,
     referred: referred.map((r) => ({
       userId: r.id,

@@ -76,13 +76,13 @@ export const apelist = {
       return;
     }
     const link = `${env.PUBLIC_URL}/api/apelist/confirm?t=${token}`;
-    const text = `ape memes. ape stonks.\n\ntap to confirm your spot: ${link}\n\nwe'll email you once when ApeMe hits the App Store. that's it.`;
-    const html = `<p>ape memes. ape stonks.</p><p><a href="${link}">tap to confirm your spot</a></p><p>we'll email you once when ApeMe hits the App Store. that's it.</p>`;
+    const text = `tokenized stocks, from your phone.\n\ntap to confirm your spot: ${link}\n\nwe'll email you once TradeStonks hits the App Store. that's it.`;
+    const html = `<p>tokenized stocks, from your phone.</p><p><a href="${link}">tap to confirm your spot</a></p><p>we'll email you once TradeStonks hits the App Store. that's it.</p>`;
     try {
       await resend.send(env.RESEND_API_KEY, {
-        from: "ApeMe <hey@apeme.fun>",
+        from: "TradeStonks <hey@apeme.fun>",
         to: email,
-        subject: "you're on the apelist",
+        subject: "you're on the list",
         text,
         html,
       });

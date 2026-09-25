@@ -1,4 +1,4 @@
-// Launch-day blast. Sends "ApeMe is live" to every confirmed, not-yet-blasted signup in batches of 100 via Resend,
+// Launch-day blast. Sends "TradeStonks is live" to every confirmed, not-yet-blasted signup in batches of 100 via Resend,
 // stamping blasted_at so a re-run skips rows already sent. Never run automatically.
 //
 //   RESEND_API_KEY=re_xxx APP_STORE_URL=https://apps.apple.com/... bun run scripts/blast.ts
@@ -18,8 +18,8 @@ async function d1<T>(sql: string): Promise<T[]> {
   return (JSON.parse(out)[0]?.results ?? []) as T[];
 }
 
-const text = `ApeMe is live.\n\nape memes. ape stonks. now on the App Store:\n${url}\n\nthat's the one email we promised.`;
-const html = `<p>ApeMe is live.</p><p>ape memes. ape stonks. now on the App Store:<br><a href="${url}">${url}</a></p><p>that's the one email we promised.</p>`;
+const text = `TradeStonks is live.\n\ntokenized stocks, from your phone. now on the App Store:\n${url}\n\nthat's the one email we promised.`;
+const html = `<p>TradeStonks is live.</p><p>tokenized stocks, from your phone. now on the App Store:<br><a href="${url}">${url}</a></p><p>that's the one email we promised.</p>`;
 
 let sent = 0;
 for (;;) {
@@ -32,9 +32,9 @@ for (;;) {
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(
       rows.map(({ email }) => ({
-        from: "ApeMe <hey@apeme.fun>",
+        from: "TradeStonks <hey@apeme.fun>",
         to: email,
-        subject: "ApeMe is live",
+        subject: "TradeStonks is live",
         text,
         html,
       })),

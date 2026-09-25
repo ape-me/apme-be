@@ -1,5 +1,5 @@
 {
-  "name": "apme-be",
+  "name": "tradestonks-be",
   "type": "module",
   "private": true,
   "devDependencies": {
