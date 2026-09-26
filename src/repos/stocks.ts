@@ -19,7 +19,6 @@ export type StockRow = {
   logo: string | null;
   price_usd: number | null;
   change_24h: number | null;
-  memes?: number;
   multiplier: number;
   tags: string[] | string;
   mark_usd: number | null;
@@ -28,38 +27,17 @@ export type StockRow = {
   vol_24h_usd: number | null;
   buys_24h: number | null;
   sells_24h: number | null;
-  heat: number;
-  launched_24h: number;
-  meme_vol_24h: number;
-  wallets_24h: number;
-  king_mint: string | null;
-  king_symbol: string | null;
-  king_image: string | null;
-  king_vol: number | null;
-  king_price: number | null;
-  king_mcap: number | null;
-  king_change: number | null;
-  king_phase: "curve" | "graduated" | null;
-  king_progress: number | null;
-  king_launchpad: string | null;
 };
 
-// One row per stock: its market data plus its floor's last 24h (stock_stats, refreshed by the indexer).
+// One row per stock, with the market data the indexer refreshes.
+// Crypto pairs Backpack lists beside its equities are priced but never listed: this is a stock app.
 const select = (sql: Sql, where: ReturnType<Sql>) => sql<StockRow[]>`
   SELECT s.mint, s.symbol, s.name, s.issuer, s.category, s.decimals, s.logo, s.price_usd, s.change_24h, s.multiplier, s.tags,
-         s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h,
-         (SELECT count(*)::int FROM tokens k WHERE k.quote_mint = s.mint) AS memes,
-         coalesce(ss.launched_24h, 0) AS launched_24h, coalesce(ss.meme_vol_24h, 0) AS meme_vol_24h,
-         coalesce(ss.wallets_24h, 0) AS wallets_24h, coalesce(ss.heat, 0) AS heat,
-         ss.king_mint, kg.symbol AS king_symbol, kg.image AS king_image, kst.vol_24h_usd AS king_vol,
-         kst.price_usd AS king_price, kst.mcap_usd AS king_mcap, kst.change_24h AS king_change, kg.phase AS king_phase, kst.progress_pct AS king_progress, kg.launchpad AS king_launchpad
+         s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h
   FROM stocks s
-  LEFT JOIN stock_stats ss ON ss.mint = s.mint
-  LEFT JOIN tokens kg ON kg.mint = ss.king_mint
-  LEFT JOIN token_stats kst ON kst.token_mint = ss.king_mint
   WHERE s.category <> 'crypto' AND NOT s.excluded
         AND s.price_usd IS NOT NULL AND coalesce(s.liquidity_usd, 0) >= ${MIN_LIQUIDITY_USD} ${where}
-  ORDER BY heat DESC, memes DESC, s.symbol`;
+  ORDER BY coalesce(s.vol_24h_usd, 0) DESC, coalesce(s.liquidity_usd, 0) DESC, s.symbol`;
 
 export const stocksRepo = {
   all: (sql: Sql) => select(sql, sql``),
