@@ -2,7 +2,6 @@ import type { Env } from "../env";
 import type { WsMessage } from "../contract";
 import { sign } from "../lib/hmac";
 
-export const FLOOR = "floor";
 /// One room per stock: every trade and launch on that floor. Subscribe with room=stock:<mint>.
 export const STOCK = (mint: string) => `stock:${mint}`;
 

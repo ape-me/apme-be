@@ -5,18 +5,7 @@ import { withDb, type DbVars } from "../middleware/db";
 import { rateLimited } from "../middleware/ratelimit";
 import { cached } from "../lib/cache";
 import { badRequest } from "../lib/errors";
-import {
-  Mint,
-  Timeframe,
-  Sort,
-  Column,
-  Limit,
-  Ts,
-  Cursor,
-  TokenFilters,
-  Issuer,
-  HistoryRange,
-} from "../contract";
+import { Mint, Limit, Ts, Issuer, HistoryRange } from "../contract";
 import { catalog } from "../services/catalog";
 import { news, IMPACT_LEVEL } from "../services/news";
 import { insights } from "../services/insights";
@@ -41,8 +30,8 @@ read.use("*", rateLimited, withDb);
 
 read.get("/ticker", (c) =>
   cached(c.req.raw, 3, async () => {
-    const q = parse(z.object({ stonks: Limit.default(10), memes: Limit.default(10) }), c.req.query());
-    return c.json(await catalog.ticker(c.get("sql"), q.stonks, q.memes));
+    const q = parse(z.object({ stonks: Limit.default(10) }), c.req.query());
+    return c.json(await catalog.ticker(c.get("sql"), q.stonks));
   }),
 );
 
@@ -180,74 +169,4 @@ read.get("/stocks/:mint", (c) =>
   cached(c.req.raw, 5, async () =>
     c.json(await catalog.stock(c.get("sql"), parse(Mint, c.req.param("mint")))),
   ),
-);
-
-const ListQuery = TokenFilters.extend({
-  column: Column.optional(),
-  sort: Sort.optional(),
-  limit: Limit.default(50),
-  cursor: Cursor,
-});
-
-read.get("/stocks/:mint/tokens", (c) =>
-  cached(c.req.raw, 3, async () => {
-    const mint = parse(Mint, c.req.param("mint"));
-    const { column, sort, limit, cursor, ...filters } = parse(ListQuery, c.req.query());
-    return c.json(await catalog.stockTokens(c.get("sql"), mint, { column, sort, limit, cursor, filters }));
-  }),
-);
-
-read.get("/tokens", (c) =>
-  cached(c.req.raw, 3, async () => {
-    const mints = c.req.query("mints");
-    if (mints) return c.json(await catalog.tokensByMints(c.get("sql"), parse(MintList, mints.split(","))));
-    const { column, sort, limit, cursor, ...filters } = parse(
-      ListQuery.extend({ stock: Mint.optional() }),
-      c.req.query(),
-    );
-    const { stock, ...rest } = filters as typeof filters & { stock?: string };
-    return c.json(await catalog.list(c.get("sql"), { stock, column, sort, limit, cursor, filters: rest }));
-  }),
-);
-
-read.get("/floor", (c) =>
-  cached(c.req.raw, 3, async () => {
-    const { stock, limit, ...filters } = parse(
-      TokenFilters.extend({ stock: Mint.optional(), limit: Limit.default(30) }),
-      c.req.query(),
-    );
-    return c.json(await catalog.floor(c.get("sql"), { stock, limit, filters }));
-  }),
-);
-
-read.get("/tokens/:mint", (c) =>
-  cached(c.req.raw, 3, async () =>
-    c.json(await catalog.token(c.get("sql"), parse(Mint, c.req.param("mint")))),
-  ),
-);
-
-read.get("/tokens/:mint/candles", (c) =>
-  cached(c.req.raw, 2, async () => {
-    const mint = parse(Mint, c.req.param("mint"));
-    const q = parse(
-      z.object({
-        tf: Timeframe.default("1m"),
-        limit: Limit.default(300),
-        before: z.coerce.number().int().optional(),
-      }),
-      c.req.query(),
-    );
-    return c.json(await market.candles(c.get("sql"), mint, q.tf, q.limit, q.before));
-  }),
-);
-
-read.get("/tokens/:mint/trades", (c) =>
-  cached(c.req.raw, 2, async () => {
-    const mint = parse(Mint, c.req.param("mint"));
-    const q = parse(
-      z.object({ limit: Limit.default(100), before: z.coerce.number().int().optional() }),
-      c.req.query(),
-    );
-    return c.json(await market.trades(c.get("sql"), mint, q.limit, q.before));
-  }),
 );

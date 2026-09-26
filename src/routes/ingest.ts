@@ -5,7 +5,7 @@ import type { Env } from "../env";
 import { verify } from "../lib/hmac";
 import { badRequest, unauthorized } from "../lib/errors";
 import { IngestBatch, type WsMessage } from "../contract";
-import { rooms, FLOOR, STOCK, userRoom } from "../services/rooms";
+import { rooms, STOCK, userRoom } from "../services/rooms";
 
 export const ingest = new Hono<{ Bindings: Env }>();
 
@@ -24,28 +24,14 @@ ingest.post("/trades", async (c) => {
 
   const byRoom = new Map<string, WsMessage[]>();
   const push = (room: string, m: WsMessage) => byRoom.set(room, [...(byRoom.get(room) ?? []), m]);
-  for (const t of r.data.trades) {
-    const { pool: _p, program: _g, quoteMint, ...rest } = t;
-    const msg: WsMessage = { t: "trade", ...rest };
-    push(t.mint, msg);
-    push(FLOOR, msg);
-    if (quoteMint) push(STOCK(quoteMint), msg); // the stock page's live tape
-  }
-  for (const tk of r.data.tokens) {
-    const msg: WsMessage = { t: "token", ...tk };
-    push(FLOOR, msg);
-    push(tk.mint, msg);
-    push(STOCK(tk.quoteMint), msg);
-  }
   for (const n of r.data.news) push(STOCK(n.mint), { t: "news", ...n });
-  for (const p of r.data.prices) push(p.kind === "meme" ? p.mint : STOCK(p.mint), { t: "price", ...p });
+  // The indexer still reports the floor it watches; nothing subscribes to it any more, so only stonks fan out.
+  for (const p of r.data.prices) if (p.kind !== "meme") push(STOCK(p.mint), { t: "price", ...p });
   for (const { userId, ...o } of r.data.orders)
     push(await userRoom(c.env.INGEST_SECRET, userId), { t: "order", ...o });
   c.executionCtx.waitUntil(rooms.publish(c.env, byRoom));
   return c.json({
     ok: true,
-    trades: r.data.trades.length,
-    tokens: r.data.tokens.length,
     prices: r.data.prices.length,
     orders: r.data.orders.length,
     rooms: byRoom.size,

@@ -4,7 +4,7 @@ import { walletRepo } from "../repos/wallet";
 import { balances, solPrice, usdcTransfers, SOL_MINT, USDC_MINT } from "../lib/rpc";
 import { ata } from "../lib/solana";
 import { txStatus } from "./swap";
-import { swapAct, depositAct, tradeAct, USDC_LOGO, type Act } from "./activity";
+import { swapAct, depositAct, USDC_LOGO, type Act } from "./activity";
 import { PublicKey } from "@solana/web3.js";
 import type { WalletResponse } from "../contract";
 import type { z } from "zod";
@@ -23,16 +23,13 @@ export async function wallet(
   activityLimit: number,
 ): Promise<z.infer<typeof WalletResponse>> {
   const usdcAta = ata(new PublicKey(address), new PublicKey(USDC_MINT)).toBase58();
-  const [{ sol, tokens }, solUsdPrice, tradePositions, tradeRows, swapPositions, swapRows, transfers] =
-    await Promise.all([
-      balances(env, address),
-      solPrice(),
-      walletRepo.positions(sql, address),
-      walletRepo.activity(sql, address, activityLimit),
-      walletRepo.swapPositions(sql, address),
-      walletRepo.swapActivity(sql, address, activityLimit),
-      usdcTransfers(env, usdcAta).catch(() => []),
-    ]);
+  const [{ sol, tokens }, solUsdPrice, swapPositions, swapRows, transfers] = await Promise.all([
+    balances(env, address),
+    solPrice(),
+    walletRepo.swapPositions(sql, address),
+    walletRepo.swapActivity(sql, address, activityLimit),
+    usdcTransfers(env, usdcAta).catch(() => []),
+  ]);
   if (transfers.length) await walletRepo.saveDeposits(sql, address, transfers).catch(() => {});
   // Rows still "submitted" only flip when /v1/tx is polled; settle them here so pendingSwaps is honest.
   const settled = await Promise.all(
@@ -53,7 +50,7 @@ export async function wallet(
   const known = mints.length ? await walletRepo.known(sql, mints) : [];
   const meta = new Map(known.map((k) => [k.mint, k]));
 
-  // Cost basis per mint: our swaps (stocks and memes) + indexer trades (memes bought on the floor elsewhere).
+  // Cost basis per mint, averaged over every buy we know of.
   const basis = new Map<
     string,
     { boughtRaw: number; boughtUsd: number; soldRaw: number; soldUsd: number; feesUsd: number }
@@ -71,14 +68,6 @@ export async function wallet(
       feesUsd: cur.feesUsd + b.feesUsd,
     });
   };
-  for (const p of tradePositions)
-    add(p.token_mint, {
-      boughtRaw: Number(p.bought_raw),
-      boughtUsd: p.bought_usd,
-      soldRaw: Number(p.sold_raw),
-      soldUsd: p.sold_usd,
-      feesUsd: 0,
-    });
   for (const p of swapPositions)
     add(p.mint, {
       boughtRaw: Number(p.bought_raw),
@@ -133,19 +122,17 @@ export async function wallet(
     });
 
   let stocksUsd = 0,
-    memesUsd = 0,
     costUsd = 0,
     feesUsd = 0,
     pnlUsd = 0,
     realizedUsd = 0;
   for (const t of tokens) {
     const m = meta.get(t.mint);
-    if (!m) continue; // not a stock or a meme we index: hidden, not our business
+    if (!m) continue; // not a stonk we index: hidden, not our business
     // Displayed units from raw: RPC uiAmount is inconsistent about the scaled-UI multiplier, so never use it.
-    const amount = (Number(t.raw) / 10 ** t.decimals) * (m.kind === "stock" ? Number(m.multiplier ?? 1) : 1);
+    const amount = (Number(t.raw) / 10 ** t.decimals) * Number(m.multiplier ?? 1);
     const value = m.price_usd == null ? null : amount * m.price_usd;
-    if (m.kind === "stock") stocksUsd += value ?? 0;
-    else memesUsd += value ?? 0;
+    stocksUsd += value ?? 0;
     // Cost = what actually bought tokens (fees excluded), averaged per raw unit over every buy we know of.
     const b = basis.get(t.mint);
     let cost: number | null = null,
@@ -189,7 +176,7 @@ export async function wallet(
     a.kind === "cash" ? -1 : b.kind === "cash" ? 1 : (b.valueUsd ?? 0) - (a.valueUsd ?? 0),
   );
 
-  // Activity: our swaps first (they carry status), then chain deposits, then indexed meme trades. De-duped by signature.
+  // Activity: our swaps first (they carry status), then chain deposits. De-duped by signature.
   const seen = new Set<string>();
   const activity: Act[] = [];
   let pendingSwaps = 0;
@@ -204,19 +191,14 @@ export async function wallet(
     seen.add(d.sig);
     activity.push(depositAct(d));
   }
-  for (const r of tradeRows) {
-    if (seen.has(r.signature)) continue;
-    activity.push(tradeAct(r));
-  }
   activity.sort((a, b) => b.ts - a.ts);
 
   return {
     address,
-    totalUsd: round(cashUsd + solUsd + stocksUsd + memesUsd)!,
+    totalUsd: round(cashUsd + solUsd + stocksUsd)!,
     cashUsd: round(cashUsd)!,
     solUsd: round(solUsd)!,
     stocksUsd: round(stocksUsd)!,
-    memesUsd: round(memesUsd)!,
     costUsd: round(costUsd)!,
     feesUsd: round(feesUsd)!,
     pnlUsd: round(pnlUsd)!,

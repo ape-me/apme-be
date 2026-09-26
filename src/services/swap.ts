@@ -104,8 +104,8 @@ async function buildTx(
   // the sheet shows the total before they sign. Sells are unchanged: the fee comes off the proceeds.
   const tokenPk = new PublicKey(tokenMint);
   const usdcPk = new PublicKey(USDC_MINT);
-  const [[stockRows, memeRows], solUsdNow, usdcInfo, issuerFeeBps] = await Promise.all([
-    Promise.all([swapsRepo.stockMeta(sql, tokenMint), swapsRepo.tokenMeta(sql, tokenMint)]),
+  const [stockRows, solUsdNow, usdcInfo, issuerFeeBps] = await Promise.all([
+    swapsRepo.stockMeta(sql, tokenMint),
     solUsd(),
     side === "buy" ? conn.getAccountInfo(ata(taker, usdcPk)) : Promise.resolve(null),
     transferFeeBps(conn, tokenPk),
@@ -113,9 +113,8 @@ async function buildTx(
   // Jupiter quotes before the mint's own transfer fee, so the fee must sit inside the slippage or every fill misses minOut.
   const jupSlippageBps = slippageBps + issuerFeeBps;
   const stock = stockRows[0];
-  const meme = stock ? null : memeRows[0];
-  if (!stock && !meme) throw notFound("token");
-  const symbol = stock?.symbol ?? meme?.symbol ?? null;
+  if (!stock) throw notFound("token");
+  const symbol = stock.symbol;
   const lamportsToUsd = (l: number) => (solUsdNow ? Math.ceil((l / 1e9) * solUsdNow * 100) / 100 : 0);
   const feeOnInput = side === "buy" ? (amount * BigInt(FEE_BPS)) / 10_000n : 0n;
 
@@ -243,7 +242,7 @@ async function buildTx(
   const msgHash = await sha256hex(msgBytes);
   const gasLamports = (ixs.prioritizationFeeLamports ?? 0) + 5000 * 2;
   const premiumPct = stock?.premium_pct == null ? null : Number(stock.premium_pct);
-  const tokenDecimals = stock?.decimals ?? meme?.decimals ?? 6,
+  const tokenDecimals = stock.decimals,
     multiplier = stock ? Number(stock.multiplier ?? 1) : 1;
   return {
     tokenDecimals,
@@ -281,11 +280,7 @@ const DEPTH_LEVELS = [100, 1_000, 10_000] as const;
 
 // What a buy of each size costs in price impact. Thin pools punish size, and the app should say so before the sheet.
 export async function depth(env: Env, sql: Sql, mint: string) {
-  const [stockRows, memeRows] = await Promise.all([
-    swapsRepo.stockMeta(sql, mint),
-    swapsRepo.tokenMeta(sql, mint),
-  ]);
-  const symbol = stockRows[0]?.symbol ?? memeRows[0]?.symbol;
+  const symbol = (await swapsRepo.stockMeta(sql, mint))[0]?.symbol;
   if (symbol === undefined) throw notFound("token");
   const levels = await Promise.all(
     DEPTH_LEVELS.map(async (usd) => {

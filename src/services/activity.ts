@@ -1,7 +1,7 @@
 import type { Sql } from "../lib/db";
 import type { z } from "zod";
 import { walletRepo } from "../repos/wallet";
-import type { ActivityRow, SwapActivityRow, KnownRow } from "../repos/wallet";
+import type { SwapActivityRow, KnownRow } from "../repos/wallet";
 import type { Activity } from "../contract";
 import { USDC_MINT } from "../lib/rpc";
 
@@ -14,7 +14,7 @@ export const USDC_LOGO =
 const round = (v: number | null | undefined, d = 2) =>
   v == null || !Number.isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d;
 
-// Three sources, one shape: our swaps carry a status, chain transfers and indexed floor trades are settled.
+// Two sources, one shape: our swaps carry a status, chain transfers are settled.
 export function swapAct(r: SwapActivityRow, meta: Meta): Act {
   const tokenMint = r.side === "buy" ? r.output_mint : r.input_mint;
   const tm = meta.get(tokenMint);
@@ -25,15 +25,12 @@ export function swapAct(r: SwapActivityRow, meta: Meta): Act {
     ts: Number(r.confirmed_at ?? r.created_at),
     type: r.side,
     status: r.status === "confirmed" ? "confirmed" : r.status === "failed" ? "failed" : "pending",
-    source: "apeme",
+    source: "apeme", // API value the app switches on; renaming it is a coordinated FE change
     side: r.side,
     mint: tokenMint,
     symbol: r.symbol ?? tm?.symbol ?? null,
     image: tm?.image ?? null,
-    stockSymbol: tm?.kind === "meme" ? tm.quote_symbol : null,
-    amount: tokenRaw
-      ? (Number(tokenRaw) / 10 ** decimals) * (tm?.kind === "stock" ? Number(tm.multiplier ?? 1) : 1)
-      : 0,
+    amount: tokenRaw ? (Number(tokenRaw) / 10 ** decimals) * Number(tm?.multiplier ?? 1) : 0,
     quote: r.side === "buy" ? Number(r.in_raw) / 1e6 : r.out_raw == null ? null : Number(r.out_raw) / 1e6,
     usd: round(r.side === "buy" ? r.in_usd : r.out_usd),
     feeUsd: round(r.fee_usd),
@@ -59,34 +56,11 @@ export function depositAct(d: {
     mint: USDC_MINT,
     symbol: "USDC",
     image: USDC_LOGO,
-    stockSymbol: null,
     amount: d.amount,
     quote: null,
     usd: round(d.amount),
     feeUsd: null,
     from: d.from,
-    error: null,
-  };
-}
-
-export function tradeAct(r: ActivityRow): Act {
-  const quote = Number(r.quote_raw) / 10 ** r.quote_decimals;
-  return {
-    sig: r.signature,
-    ts: Number(r.block_time),
-    type: r.side,
-    status: "confirmed",
-    source: "chain",
-    side: r.side,
-    mint: r.token_mint,
-    symbol: r.symbol,
-    image: r.image,
-    stockSymbol: r.stock_symbol,
-    amount: Number(r.base_raw) / 10 ** r.decimals,
-    quote,
-    usd: round(quote * (r.quote_usd ?? r.stock_price_usd ?? NaN)),
-    feeUsd: null,
-    from: null,
     error: null,
   };
 }
@@ -108,7 +82,7 @@ const decode = (c: string | null) => {
 };
 const encode = (a: Act) => Buffer.from(`${a.ts}|${a.sig ?? ""}`).toString("base64url");
 
-// Every source is asked for one page ending at the cursor, then merged and cut. Asking each for `limit` rows
+// Both sources are asked for one page ending at the cursor, then merged and cut. Asking each for `limit` rows
 // is enough: whichever source the page ends in, the rows beyond the cut are simply fetched again next time.
 export async function activityPage(sql: Sql, address: string, q: ActivityQuery) {
   const cur = decode(q.cursor);
@@ -125,9 +99,8 @@ export async function activityPage(sql: Sql, address: string, q: ActivityQuery) 
     before: cur?.ts ?? null,
     limit: q.limit + 1,
   };
-  const [swaps, trades, deposits] = await Promise.all([
+  const [swaps, deposits] = await Promise.all([
     wantTrades ? walletRepo.swapPage(sql, page) : [],
-    wantTrades ? walletRepo.tradePage(sql, page) : [],
     wantDeposits
       ? walletRepo.depositPage(sql, { ...page, directions: directions.length ? directions : ["in", "out"] })
       : [],
@@ -157,7 +130,6 @@ export async function activityPage(sql: Sql, address: string, q: ActivityQuery) 
         }),
       );
     }
-  for (const r of trades) if (!seen.has(r.signature)) all.push(tradeAct(r));
 
   all.sort((a, b) => b.ts - a.ts || (b.sig ?? "").localeCompare(a.sig ?? ""));
   const after = cur ? all.filter((a) => a.ts < cur.ts || (a.ts === cur.ts && (a.sig ?? "") < cur.sig)) : all;

@@ -1,33 +1,11 @@
 import type { Sql } from "../lib/db";
 import { stocksRepo } from "../repos/stocks";
-import { tokensRepo, defaultSort, type Sort, type Column } from "../repos/tokens";
 import { tickerRepo } from "../repos/ticker";
 import { notFound } from "../lib/errors";
-import { shapeStock, shapeToken, shapeHeader, marketSession } from "./shape";
+import { shapeStock, marketSession } from "./shape";
 import { COLLECTIONS, filterCollection } from "./collections";
-import type {
-  StocksResponse,
-  StockTokensResponse,
-  TokenHeader,
-  TickerResponse,
-  TokensResponse,
-  FloorResponse,
-  TokenFilters,
-  CollectionsResponse,
-  MoversResponse,
-} from "../contract";
+import type { StocksResponse, TickerResponse, CollectionsResponse, MoversResponse } from "../contract";
 import type { z } from "zod";
-
-const encodeCursor = (v: number, mint: string) => btoa(`${v}:${mint}`);
-const decodeCursor = (c?: string) => {
-  if (!c) return undefined;
-  try {
-    const [v, mint] = atob(c).split(":");
-    return v && mint ? { v: Number(v), mint } : undefined;
-  } catch {
-    return undefined;
-  }
-};
 
 const market = () => {
   const session = marketSession();
@@ -39,14 +17,12 @@ const MOVER_MAX_PREMIUM = 15; // percent off the real price
 const MOVER_DEEP_LIQUIDITY = 500_000; // trusted without a mark
 
 export const catalog = {
-  ticker: async (sql: Sql, stonks: number, memes: number): Promise<z.infer<typeof TickerResponse>> => {
-    const rows = await tickerRepo.rows(sql, stonks, memes);
-    const memesFirst = [...rows.filter((r) => r.kind === "meme"), ...rows.filter((r) => r.kind === "stonk")];
+  ticker: async (sql: Sql, stonks: number): Promise<z.infer<typeof TickerResponse>> => {
+    const rows = await tickerRepo.rows(sql, stonks);
     return {
       updatedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-      tokens: memesFirst.map((r) => ({
+      tokens: rows.map((r) => ({
         id: r.id,
-        kind: r.kind,
         label: r.label,
         logo: r.logo,
         change24h: r.change24h == null ? null : Number(r.change24h),
@@ -126,16 +102,6 @@ export const catalog = {
       asOf: Math.floor(Date.now() / 1000),
     };
   },
-  tokensByMints: async (sql: Sql, mints: string[]): Promise<z.infer<typeof TokensResponse>> => {
-    const by = new Map((await tokensRepo.byMints(sql, mints)).map((r) => [r.mint, r]));
-    return {
-      tokens: mints
-        .map((m) => by.get(m))
-        .filter((r): r is NonNullable<typeof r> => !!r)
-        .map(shapeToken),
-      next: null,
-    };
-  },
   stock: async (sql: Sql, mint: string) => {
     const row = await stocksRepo.byMint(sql, mint);
     if (!row) throw notFound("stock");
@@ -143,72 +109,6 @@ export const catalog = {
   },
 
   // Any token list: per stock or global, optional column, filters, sort, cursor. `next` is null on the last page.
-  list: async (
-    sql: Sql,
-    o: {
-      stock?: string;
-      column?: Column;
-      sort?: Sort;
-      limit: number;
-      cursor?: string;
-      filters: TokenFilters;
-    },
-  ): Promise<z.infer<typeof TokensResponse>> => {
-    const sort = o.sort ?? defaultSort(o.column);
-    const rows = await tokensRepo.list(sql, {
-      stock: o.stock,
-      column: o.column,
-      sort,
-      limit: o.limit,
-      after: decodeCursor(o.cursor),
-      filters: o.filters,
-    });
-    const last = rows[rows.length - 1] as ((typeof rows)[number] & { sort_v: number }) | undefined;
-    return {
-      tokens: rows.map(shapeToken),
-      next: rows.length === o.limit && last ? encodeCursor(Number(last.sort_v), last.mint) : null,
-    };
-  },
-
-  stockTokens: async (
-    sql: Sql,
-    mint: string,
-    o: { column?: Column; sort?: Sort; limit: number; cursor?: string; filters: TokenFilters },
-  ): Promise<z.infer<typeof StockTokensResponse>> => {
-    const [stock, page] = await Promise.all([
-      stocksRepo.byMint(sql, mint),
-      catalog.list(sql, { ...o, stock: mint }),
-    ]);
-    if (!stock) throw notFound("stock");
-    return { stock: shapeStock(stock), tokens: page.tokens, next: page.next };
-  },
 
   // The whole floor screen in one call: three columns, top `limit` each, same filters applied to all three.
-  floor: async (
-    sql: Sql,
-    o: { stock?: string; limit: number; filters: TokenFilters },
-  ): Promise<z.infer<typeof FloorResponse>> => {
-    const col = (column: Column) =>
-      catalog.list(sql, { stock: o.stock, column, limit: o.limit, filters: o.filters });
-    const [stock, n, g, d] = await Promise.all([
-      o.stock ? stocksRepo.byMint(sql, o.stock) : Promise.resolve(null),
-      col("new"),
-      col("graduating"),
-      col("graduated"),
-    ]);
-    if (o.stock && !stock) throw notFound("stock");
-    return {
-      stock: stock ? shapeStock(stock) : null,
-      new: n.tokens,
-      graduating: g.tokens,
-      graduated: d.tokens,
-      asOf: Math.floor(Date.now() / 1000),
-    };
-  },
-
-  token: async (sql: Sql, mint: string): Promise<TokenHeader> => {
-    const t = await tokensRepo.withStock(sql, mint);
-    if (!t) throw notFound("token");
-    return shapeHeader(t, t.stock);
-  },
 };
