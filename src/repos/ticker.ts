@@ -12,6 +12,6 @@ export const tickerRepo = {
   // The busiest stonks by their own 24h volume, with live prices from the indexer.
   rows: (sql: Sql, stonks: number) => sql<TickerRow[]>`
     SELECT s.mint AS id, s.symbol AS label, s.logo, s.change_24h AS change24h, s.price_usd AS price
-    FROM stocks s WHERE s.price_usd IS NOT NULL AND NOT s.excluded
+    FROM stocks s WHERE s.price_usd IS NOT NULL AND NOT s.excluded AND s.category NOT IN ('crypto', 'earn')
     ORDER BY coalesce(s.vol_24h_usd, 0) DESC, coalesce(s.liquidity_usd, 0) DESC LIMIT ${stonks}`,
 };

@@ -108,5 +108,6 @@ export const newsRepo = {
   stocksForNews: (sql: Sql) =>
     sql<
       { mint: string; symbol: string; name: string; issuer: string }[]
-    >`SELECT mint, symbol, name, issuer FROM stocks WHERE NOT excluded AND category <> 'crypto' ORDER BY symbol`,
+    >`SELECT mint, symbol, name, issuer FROM stocks
+        WHERE NOT excluded AND category IN ('stock', 'etf', 'preipo') AND coalesce(liquidity_usd, 0) >= 5000 ORDER BY symbol`, // only what the app shows: the catalog is 2,300 mints, Finnhub is one call per ticker
 };

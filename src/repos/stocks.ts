@@ -28,20 +28,34 @@ export type StockRow = {
   buys_24h: number | null;
   sells_24h: number | null;
   halted: boolean;
+  underlying: string | null;
 };
 
-// One row per stock, with the market data the indexer refreshes.
-// Crypto pairs Backpack lists beside its equities are priced but never listed: this is a stock app.
+export const Category = ["stock", "etf", "preipo", "crypto", "earn"] as const;
+export type Category = (typeof Category)[number];
+const COLS = (sql: Sql) => sql`
+  s.mint, s.symbol, s.name, s.issuer, s.category, s.decimals, s.logo, s.price_usd, s.change_24h, s.multiplier, s.tags,
+  s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h, s.halted, s.underlying`;
+// Only what can be traded reaches a card: priced, pooled, not excluded.
+const live = (sql: Sql) =>
+  sql`NOT s.excluded AND s.price_usd IS NOT NULL AND coalesce(s.liquidity_usd, 0) >= ${MIN_LIQUIDITY_USD}`;
+const order = (sql: Sql) =>
+  sql`ORDER BY coalesce(s.vol_24h_usd, 0) DESC, coalesce(s.liquidity_usd, 0) DESC, s.symbol`;
+// Specific mints, e.g. a holding or an order: whichever issuer's token it is.
 const select = (sql: Sql, where: ReturnType<Sql>) => sql<StockRow[]>`
-  SELECT s.mint, s.symbol, s.name, s.issuer, s.category, s.decimals, s.logo, s.price_usd, s.change_24h, s.multiplier, s.tags,
-         s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h, s.halted
-  FROM stocks s
-  WHERE s.category <> 'crypto' AND NOT s.excluded
-        AND s.price_usd IS NOT NULL AND coalesce(s.liquidity_usd, 0) >= ${MIN_LIQUIDITY_USD} ${where}
-  ORDER BY coalesce(s.vol_24h_usd, 0) DESC, coalesce(s.liquidity_usd, 0) DESC, s.symbol`;
+  SELECT ${COLS(sql)} FROM stocks s WHERE ${live(sql)} ${where} ${order(sql)}`;
+// The list: one row per company, the deepest pool wins when two issuers tokenize the same stock.
+// Stocks, ETFs and pre-IPO share the default tab; crypto and earn only appear when asked for.
+const list = (sql: Sql, category?: Category) => sql<StockRow[]>`
+  SELECT * FROM (
+    SELECT DISTINCT ON (coalesce(s.underlying, s.mint)) ${COLS(sql)}
+    FROM stocks s WHERE ${live(sql)}
+      AND ${category ? sql`s.category = ${category}` : sql`s.category NOT IN ('crypto', 'earn')`}
+    ORDER BY coalesce(s.underlying, s.mint), coalesce(s.liquidity_usd, 0) DESC) s
+  ${order(sql)}`;
 
 export const stocksRepo = {
-  all: (sql: Sql) => select(sql, sql``),
+  all: (sql: Sql, category?: Category) => list(sql, category),
   byMint: async (sql: Sql, mint: string) => (await select(sql, sql`AND s.mint = ${mint}`))[0] ?? null,
   byMints: (sql: Sql, mints: string[]) => select(sql, sql`AND s.mint IN ${sql(mints)}`),
   withConfig: (

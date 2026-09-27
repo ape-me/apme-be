@@ -1,5 +1,5 @@
 import type { Sql } from "../lib/db";
-import { stocksRepo } from "../repos/stocks";
+import { stocksRepo, type Category } from "../repos/stocks";
 import { tickerRepo } from "../repos/ticker";
 import { notFound } from "../lib/errors";
 import { shapeStock, marketSession } from "./shape";
@@ -35,10 +35,11 @@ export const catalog = {
     sql: Sql,
     issuers?: string[],
     collection?: string,
+    category?: Category,
   ): Promise<z.infer<typeof StocksResponse>> => {
     const m = market();
-    const rows = await stocksRepo.all(sql);
-    let keep = issuers?.length ? rows.filter((r) => issuers.includes(r.issuer)) : rows; // 94 rows, cheaper than a second query plan
+    const rows = await stocksRepo.all(sql, category);
+    let keep = issuers?.length ? rows.filter((r) => issuers.includes(r.issuer)) : rows; // ~100 rows, cheaper than a second query plan
     if (collection) keep = filterCollection(keep, collection);
     return {
       stocks: keep.map((r) => shapeStock(r, m.isOpen)),
@@ -50,17 +51,19 @@ export const catalog = {
   collections: async (sql: Sql): Promise<z.infer<typeof CollectionsResponse>> => {
     const m = market();
     const rows = await stocksRepo.all(sql);
-    const bySym = new Map(rows.map((r) => [r.symbol, r]));
-    const pick = (syms: readonly string[]) =>
-      syms
-        .map((x) => bySym.get(x))
+    const byUnder = new Map(rows.map((r) => [r.underlying ?? r.symbol, r]));
+    const pick = (unders: readonly string[]) =>
+      unders
+        .map((x) => byUnder.get(x))
         .filter((r): r is NonNullable<typeof r> => !!r)
         .map((r) => shapeStock(r, m.isOpen));
     const collections = COLLECTIONS.map((c) => ({
       id: c.id,
       title: c.title,
       tagline: c.tagline,
-      stocks: c.symbols ? pick(c.symbols) : filterCollection(rows, c.id).map((r) => shapeStock(r, m.isOpen)), // symbols keep the hand-picked order
+      stocks: c.underlyings
+        ? pick(c.underlyings)
+        : filterCollection(rows, c.id).map((r) => shapeStock(r, m.isOpen)), // hand-picked order
     })).filter((c) => c.stocks.length);
     return { collections, market: m, asOf: Math.floor(Date.now() / 1000) };
   },

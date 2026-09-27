@@ -15,6 +15,7 @@ import { orderConfig } from "../services/orders";
 import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
 import { COLLECTION_IDS } from "../services/collections";
+import { Category } from "../repos/stocks";
 
 const MintList = z.array(Mint).min(1).max(50);
 
@@ -42,6 +43,7 @@ read.get("/stocks", (c) =>
       z.object({
         issuer: z.string().optional(),
         collection: z.enum(COLLECTION_IDS as [string, ...string[]]).optional(),
+        category: z.enum(Category).optional(), // crypto and earn tabs; default is stocks, ETFs and pre-IPO
         mints: z.string().optional(),
       }),
       c.req.query(),
@@ -49,7 +51,7 @@ read.get("/stocks", (c) =>
     if (q.mints)
       return c.json(await catalog.stocksByMints(c.get("sql"), parse(MintList, q.mints.split(",")))); // ?mints=a,b,c: watchlist lookup
     const issuers = q.issuer ? parse(z.array(Issuer), q.issuer.split(",")) : undefined;
-    return c.json(await catalog.stocks(c.get("sql"), issuers, q.collection));
+    return c.json(await catalog.stocks(c.get("sql"), issuers, q.collection, q.category));
   }),
 );
 

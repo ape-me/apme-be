@@ -28,7 +28,8 @@ export const Stock = z.object({
   symbol: z.string(),
   name: z.string(),
   issuer: z.string(),
-  category: z.string(),
+  category: z.string(), // stock | etf | preipo | crypto | earn
+  underlying: z.string().nullable(), // real-world ticker (AAPL for AAPLx and AAPL.US); what search and dedupe key on
   logo: z.string().nullable(),
   priceUsd: z.number().nullable(),
   change24h: z.number().nullable(),

@@ -35,6 +35,7 @@ export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
   name: r.name,
   issuer: r.issuer,
   category: r.category,
+  underlying: r.underlying,
   logo: r.logo,
   priceUsd: num(r.price_usd),
   change24h: num(r.change_24h),
