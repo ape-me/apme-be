@@ -33,6 +33,7 @@ export const Stock = z.object({
   priceUsd: z.number().nullable(),
   change24h: z.number().nullable(),
   marketOpen: z.boolean(),
+  halted: z.boolean(), // the issuer suspended trading in the underlying: no order can fill until it resumes
   decimals: z.number().int(),
   // Token-2022 scaled-UI multiplier: xStocks pay dividends / do splits by raising it. 1 raw unit = `multiplier` displayed
   // units. priceUsd is per displayed unit (what wallets show). priceQuote, candles and trade `quote` are in raw units,

@@ -114,6 +114,8 @@ async function buildTx(
   const jupSlippageBps = slippageBps + issuerFeeBps;
   const stock = stockRows[0];
   if (!stock) throw notFound("token");
+  // Backed suspends trading in the underlying: a fill would have nothing to settle against.
+  if (stock.halted) throw new HttpError(409, `trading in ${stock.symbol} is halted by the issuer`);
   const symbol = stock.symbol;
   const lamportsToUsd = (l: number) => (solUsdNow ? Math.ceil((l / 1e9) * solUsdNow * 100) / 100 : 0);
   const feeOnInput = side === "buy" ? (amount * BigInt(FEE_BPS)) / 10_000n : 0n;

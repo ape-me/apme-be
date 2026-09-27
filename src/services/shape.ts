@@ -39,6 +39,7 @@ export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
   priceUsd: num(r.price_usd),
   change24h: num(r.change_24h),
   marketOpen: open,
+  halted: r.halted ?? false,
   decimals: int(r.decimals),
   multiplier: Number(r.multiplier ?? 1),
   quoteUsd: r.price_usd == null ? null : Number(r.price_usd) * Number(r.multiplier ?? 1),

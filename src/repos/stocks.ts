@@ -27,13 +27,14 @@ export type StockRow = {
   vol_24h_usd: number | null;
   buys_24h: number | null;
   sells_24h: number | null;
+  halted: boolean;
 };
 
 // One row per stock, with the market data the indexer refreshes.
 // Crypto pairs Backpack lists beside its equities are priced but never listed: this is a stock app.
 const select = (sql: Sql, where: ReturnType<Sql>) => sql<StockRow[]>`
   SELECT s.mint, s.symbol, s.name, s.issuer, s.category, s.decimals, s.logo, s.price_usd, s.change_24h, s.multiplier, s.tags,
-         s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h
+         s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h, s.halted
   FROM stocks s
   WHERE s.category <> 'crypto' AND NOT s.excluded
         AND s.price_usd IS NOT NULL AND coalesce(s.liquidity_usd, 0) >= ${MIN_LIQUIDITY_USD} ${where}

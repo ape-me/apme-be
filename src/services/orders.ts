@@ -190,6 +190,8 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
   if (!env.JUP_REFERRAL_ACCOUNT || !env.FEE_WALLET) throw new HttpError(503, "orders are not configured");
   const [stock] = await swapsRepo.stockMeta(sql, q.mint);
   if (!stock) throw notFound("stock");
+  // Backed suspends trading in the underlying: a resting order could not settle if it filled.
+  if (stock.halted) throw new HttpError(409, `trading in ${stock.symbol} is halted by the issuer`);
   // Jupiter refuses any mint with a transfer fee, which is every PreStocks name.
   if (EXCLUDED_ISSUERS.includes(stock.issuer))
     throw new HttpError(400, "limit orders are not available for pre-IPO tokens", {
