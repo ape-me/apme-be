@@ -48,7 +48,7 @@ export const Stock = z.object({
   stockVol24hUsd: z.number().nullable(),
   buys24h: z.number().int().nullable(),
   sells24h: z.number().int().nullable(),
-  tags: z.array(z.string()), // collection ids this stock belongs to, e.g. ["ai","mag7"]; filter with /stocks?collection=
+  tags: z.array(z.string()), // collection ids it belongs to (["ai","mag7"]) plus its group for crypto/earn (majors|l1|defi|memes|solana|earn)
 });
 export const Issuer = z.enum(["xstocks", "backpack", "prestocks"]);
 

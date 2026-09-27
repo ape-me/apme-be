@@ -1,5 +1,5 @@
 // Row → contract. The only place DB column names meet API field names.
-import { tagsFor } from "./collections";
+import { tagsFor, pgArr } from "./collections";
 import type { Stock } from "../contract";
 import type { StockRow } from "../repos/stocks";
 
@@ -29,7 +29,7 @@ export function marketSession(now = new Date()): Session {
 export const marketOpen = (now = new Date()) => marketSession(now) === "open";
 
 export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
-  tags: tagsFor(r),
+  tags: [...new Set([...pgArr(r.tags), ...tagsFor(r)])], // operator/indexer tags (crypto groups) plus every collection it falls in
   mint: r.mint,
   symbol: r.symbol,
   name: r.name,
