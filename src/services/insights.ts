@@ -3,15 +3,10 @@ import type { Sql } from "../lib/db";
 import { stocksRepo } from "../repos/stocks";
 import { notFound } from "../lib/errors";
 
-// NASDAQ ticker for a listed stock: xStocks are <TICKER>x, Backpack mostly plain, pre-IPO has none.
-export const tickerOf = (s: { symbol: string; issuer: string }) =>
-  s.issuer === "prestocks"
-    ? null
-    : s.issuer === "xstocks"
-      ? s.symbol.replace(/x$/i, "")
-      : /^[A-Z]{1,5}$/.test(s.symbol)
-        ? s.symbol
-        : null;
+// Exchange ticker for a listed equity, from the issuer's underlying. Crypto, earn and pre-IPO have none: a
+// symbol like SUI or UNI is also a NYSE ticker, and Finnhub would happily answer for the wrong company.
+export const tickerOf = (s: { symbol: string; issuer: string; underlying?: string | null }) =>
+  s.issuer === "xstocks" || s.issuer === "backpack" ? (s.underlying ?? s.symbol.replace(/x$/i, "")) : null;
 
 const fh = async <T>(env: Env, path: string): Promise<T | null> => {
   if (!env.FINNHUB_KEY) return null;
