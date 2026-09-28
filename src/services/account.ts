@@ -1,5 +1,5 @@
 import type { Sql } from "../lib/db";
-import type { PrivyUser } from "../lib/privy";
+import { deletePrivyUser, type PrivyUser } from "../lib/privy";
 import { HttpError, badRequest, notFound } from "../lib/errors";
 import { pgArr } from "./collections";
 import { accountRepo, type UserRow, type WalletRow, type SettingsRow } from "../repos/account";
@@ -56,6 +56,7 @@ export async function ensureUser(
   const t = now();
   const emailHash = p.email ? await sha(p.email) : null;
   let user = (await accountRepo.touch(sql, p.id, t, emailHash))[0];
+  if (user?.deleted_at) throw new HttpError(410, "account_deleted");
   if (!user) {
     for (let i = 0; i < 5 && !user; i++) {
       const code = newCode();
@@ -104,6 +105,16 @@ export async function updateProfile(
   } catch (e) {
     if (/duplicate key/.test((e as Error).message)) throw new HttpError(409, "handle taken");
     throw e;
+  }
+}
+
+// Our records first (idempotent), then Privy; a Privy failure surfaces as 502 and the client retries.
+export async function deleteAccount(env: Env, sql: Sql, userId: string) {
+  await accountRepo.erase(sql, userId, now());
+  try {
+    await deletePrivyUser(env, userId);
+  } catch (e) {
+    throw new HttpError(502, (e as Error).message);
   }
 }
 

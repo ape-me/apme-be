@@ -9,6 +9,7 @@ import { notFound } from "../lib/errors";
 import { Mint } from "../contract";
 import {
   redeemInvite,
+  deleteAccount,
   referrals,
   claimReferrals,
   updateProfile,
@@ -79,6 +80,12 @@ me.patch("/", async (c) => {
       channel,
     ),
   );
+});
+
+// App Store 5.1.1(v): the account must be deletable from inside the app.
+me.delete("/", async (c) => {
+  await deleteAccount(c.env, c.get("sql"), c.get("user").id);
+  return c.json({ ok: true });
 });
 
 me.post("/invite", async (c) => {

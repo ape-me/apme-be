@@ -132,3 +132,16 @@ export async function fetchUserAccounts(
   userCache.set(did, { at: Date.now(), ...out });
   return out;
 }
+
+// Account deletion: Privy forgets the identity, so the same email signs up again as a brand-new user.
+export async function deletePrivyUser(env: Env, did: string): Promise<void> {
+  if (!env.PRIVY_APP_ID || !env.PRIVY_APP_SECRET) throw new Error("privy_not_configured");
+  const r = await fetch(`https://auth.privy.io/api/v1/users/${encodeURIComponent(did)}`, {
+    method: "DELETE",
+    headers: {
+      authorization: `Basic ${btoa(`${env.PRIVY_APP_ID}:${env.PRIVY_APP_SECRET}`)}`,
+      "privy-app-id": env.PRIVY_APP_ID,
+    },
+  });
+  if (!r.ok && r.status !== 404) throw new Error(`privy delete ${r.status}`);
+}
