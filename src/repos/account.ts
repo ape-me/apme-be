@@ -100,14 +100,15 @@ export const accountRepo = {
       quick_sell_pct = string_to_array(${s.sellCsv}, ',')::int[], priority = ${s.priority}, confirm_before_trade = ${s.confirm}, hide_dust = ${s.hideDust},
       updated_at = ${Math.floor(Date.now() / 1000)} WHERE user_id = ${userId} RETURNING *`,
 
-  // Personal data goes, the row stays anonymised: swaps, orders and referrals keep their foreign keys.
+  // Personal data goes, the row stays anonymised: swaps, orders and referrals keep their foreign keys. The email
+  // hash stays so a later support request from the same address can be matched to its trades; it cannot be reversed.
   erase: (sql: Sql, userId: string, t: number) =>
     sql.begin(async (tx) => {
       await tx`DELETE FROM watchlist WHERE user_id = ${userId}`;
       await tx`DELETE FROM user_settings WHERE user_id = ${userId}`;
       await tx`DELETE FROM wallets WHERE user_id = ${userId}`;
       await tx`UPDATE invite_codes SET uses = max_uses WHERE owner_user_id = ${userId}`;
-      await tx`UPDATE users SET email_hash = NULL, handle = NULL, avatar_url = NULL, deleted_at = ${t} WHERE id = ${userId}`;
+      await tx`UPDATE users SET handle = NULL, avatar_url = NULL, deleted_at = ${t} WHERE id = ${userId}`;
     }),
   invite: (sql: Sql, code: string) => sql<InviteRow[]>`SELECT * FROM invite_codes WHERE code = ${code}`,
   // One transaction: consume a use, activate the user, record who referred whom.
