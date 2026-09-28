@@ -5,6 +5,7 @@ import { pgArr } from "./collections";
 import { accountRepo, type UserRow, type WalletRow, type SettingsRow } from "../repos/account";
 import { swapsRepo } from "../repos/swaps";
 import { configNum } from "./config";
+import { wallet } from "./portfolio";
 import type { Env } from "../env";
 import { PublicKey } from "@solana/web3.js";
 import {
@@ -108,8 +109,17 @@ export async function updateProfile(
   }
 }
 
-// Our records first (idempotent), then Privy; a Privy failure surfaces as 502 and the client retries.
+// Deleting the Privy user destroys the only way into the embedded wallet, so a wallet holding more than dust
+// blocks deletion (409) until the user withdraws or exports the key. Our records first (idempotent), then
+// Privy; a Privy failure surfaces as 502 and the client retries.
+const DELETE_MAX_BALANCE_USD = 1;
 export async function deleteAccount(env: Env, sql: Sql, userId: string) {
+  for (const w of await accountRepo.wallets(sql, userId)) {
+    if (w.chain !== "solana") continue;
+    const { totalUsd } = await wallet(env, sql, w.address, 0);
+    if (totalUsd > DELETE_MAX_BALANCE_USD)
+      throw new HttpError(409, "wallet_not_empty", { address: w.address, totalUsd });
+  }
   await accountRepo.erase(sql, userId, now());
   try {
     await deletePrivyUser(env, userId);
