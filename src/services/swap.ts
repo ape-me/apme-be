@@ -186,6 +186,8 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
   const feeRaw = referral
     ? ((side === "buy" ? amount : BigInt(o.outAmount)) * BigInt(FEE_BPS)) / 10_000n
     : 0n;
+  // Jupiter's feeBps is the whole charge; with our referral on, it is our 1% (Jupiter keeps 20% of it).
+  const routerFeeBps = Math.max(o.feeBps - (feeRaw > 0n ? FEE_BPS : 0), 0);
   const inUsd = side === "buy" ? Number(amount) / 1e6 : Number(o.outAmount) / 1e6;
   const issuerFeeUsd = Math.round(inUsd * issuerFeeBps) / 10_000;
   // `outAmount` is already net of Jupiter's cut and ours (both taken in USDC); what the user actually gets.
@@ -201,6 +203,7 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
     outputMint,
     amount,
     feeRaw,
+    routerFeeBps,
     inUsd,
     outUsd,
     issuerFeeBps,
@@ -298,7 +301,7 @@ export async function quote(
       mint: USDC_MINT,
       usd: Number(feeRaw) / 1e6,
     },
-    routerFeeBps: o.feeBps,
+    routerFeeBps: b.routerFeeBps,
     router: o.router,
     issuerFee: b.issuerFeeBps
       ? { bps: b.issuerFeeBps, usd: b.issuerFeeUsd, note: "charged by the token issuer on every transfer" }
@@ -448,7 +451,7 @@ export async function simulate(env: Env, sql: Sql, q: QuoteInput) {
     feePayer: b.feePayer,
     inAmount: b.amount.toString(),
     outAmount: b.o.outAmount,
-    routerFeeBps: b.o.feeBps,
+    routerFeeBps: b.routerFeeBps,
     feeRaw: b.feeRaw.toString(),
     inUsd: b.inUsd,
     outUsd: b.outUsd,
