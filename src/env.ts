@@ -14,7 +14,8 @@ export type Env = {
   GAS_WALLET_SECRET?: string; // base58 keypair of our fee payer (secret)
   FEE_WALLET?: string; // pubkey that receives the 1% (USDC)
   JUP_API_KEY?: string;
-  JUP_REFERRAL_ACCOUNT?: string;
+  JUP_REFERRAL_ACCOUNT?: string; // Trigger (limit orders) referral account
+  JUP_ULTRA_REFERRAL?: string; // Swap v2 /order referral account under the Ultra project, collects our 1%
   FINNHUB_KEY?: string;
   AI_GATEWAY_URL?: string;
   AI_GATEWAY_TOKEN?: string;

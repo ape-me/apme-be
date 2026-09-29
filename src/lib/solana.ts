@@ -84,22 +84,6 @@ export const createAtaIdempotent = (
     ],
   });
 
-export type JupIx = {
-  programId: string;
-  accounts: { pubkey: string; isSigner: boolean; isWritable: boolean }[];
-  data: string;
-};
-export const fromJup = (ix: JupIx) =>
-  new TransactionInstruction({
-    programId: new PublicKey(ix.programId),
-    data: Buffer.from(ix.data, "base64"),
-    keys: ix.accounts.map((a) => ({
-      pubkey: new PublicKey(a.pubkey),
-      isSigner: a.isSigner,
-      isWritable: a.isWritable,
-    })),
-  });
-
 // Token-2022 transfer fee (bps) baked into the mint, e.g. PreStocks charge 1% on every transfer. Cached 10 min.
 const feeCache = new Map<string, { at: number; bps: number }>();
 export async function transferFeeBps(conn: Connection, mint: PublicKey): Promise<number> {

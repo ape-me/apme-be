@@ -19,6 +19,9 @@ type SwapRow = {
   price_impact_pct: number | null;
   premium_pct: number | null;
   priority: string;
+  payer: string;
+  router: string | null;
+  jup_request_id: string | null;
   gas_lamports: string;
   rent_lamports: string;
   signature: string | null;
@@ -54,20 +57,21 @@ export const swapsRepo = {
       feeUsd: number;
       priceImpactPct: number;
       premiumPct: number | null;
-      priority: string;
+      payer: string;
+      router: string;
+      requestId: string;
       gasLamports: number;
       rentLamports: number;
       swapUsd: number;
-      rentUsd: number;
       issuerFeeUsd: number;
       msgHash: string;
       lastValidBlockHeight: number;
       t: number;
     },
   ) => sql`INSERT INTO swaps (id, user_id, wallet, side, input_mint, output_mint, symbol, in_raw, out_raw, min_out_raw, in_usd, out_usd, fee_bps, fee_raw, fee_usd,
-                               price_impact_pct, premium_pct, priority, gas_lamports, rent_lamports, swap_usd, rent_usd, issuer_fee_usd, msg_hash, last_valid_block_height, status, created_at)
+                               price_impact_pct, premium_pct, payer, router, jup_request_id, gas_lamports, rent_lamports, swap_usd, issuer_fee_usd, msg_hash, last_valid_block_height, status, created_at)
            VALUES (${s.id}, ${s.userId}, ${s.wallet}, ${s.side}, ${s.inputMint}, ${s.outputMint}, ${s.symbol}, ${s.inRaw}, ${s.outRaw}, ${s.minOutRaw}, ${s.inUsd}, ${s.outUsd},
-                   ${s.feeBps}, ${s.feeRaw}, ${s.feeUsd}, ${s.priceImpactPct}, ${s.premiumPct}, ${s.priority}, ${s.gasLamports}, ${s.rentLamports}, ${s.swapUsd}, ${s.rentUsd}, ${s.issuerFeeUsd}, ${s.msgHash}, ${s.lastValidBlockHeight}, 'quoted', ${s.t})`,
+                   ${s.feeBps}, ${s.feeRaw}, ${s.feeUsd}, ${s.priceImpactPct}, ${s.premiumPct}, ${s.payer}, ${s.router}, ${s.requestId}, ${s.gasLamports}, ${s.rentLamports}, ${s.swapUsd}, ${s.issuerFeeUsd}, ${s.msgHash}, ${s.lastValidBlockHeight}, 'quoted', ${s.t})`,
   // A limit order that filled is a trade like any other: activity, cost basis and positions all read swaps.
   insertFill: (
     sql: Sql,

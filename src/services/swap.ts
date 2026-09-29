@@ -5,38 +5,30 @@ import { HttpError, badRequest, notFound } from "../lib/errors";
 import {
   USDC_MINT,
   SOL_MINT,
-  TOKEN_PROGRAM,
-  ATA_PROGRAM,
   ATA_RENT_LAMPORTS,
   connection,
   gasKeypair,
   ata,
-  transferChecked,
   createAtaIdempotent,
-  fromJup,
-  lookupTables,
   transferFeeBps,
   buildV0,
   sha256hex,
   u8,
-  type JupIx,
 } from "../lib/solana";
 import { swapsRepo } from "../repos/swaps";
-import { solPrice as solUsd } from "../lib/rpc";
 import type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 
-// USDC-only trading. Buys: typed amount = total debit (fee + rent inside). Sells: fee off the USDC out. We pay gas.
+// USDC-only trading on Jupiter's Swap API v2 `/order`: one call quotes and assembles the transaction, Jupiter picks
+// the venue (pools via Metis, RFQ desks via JupiterZ for Ondo), and `/execute` lands it. Our 1% rides as a referral
+// fee Jupiter collects in USDC. Gas: the user's SOL if they hold any, Jupiter's if not; when Jupiter declines we
+// become the payer ourselves (Metis only). Rent for a first-time token account is ours, once per user and mint.
 
 const FEE_BPS = 100;
 const REFERRAL_SHARE = 0.2;
 const MAX_SPONSORED_PER_HOUR = 20;
 const QUOTE_TTL_S = 45;
-const PRIORITY = {
-  normal: { priorityLevel: "medium", maxLamports: 100_000 },
-  fast: { priorityLevel: "high", maxLamports: 1_000_000 },
-  turbo: { priorityLevel: "veryHigh", maxLamports: 5_000_000 },
-} as const;
-const TURBO_MIN_USD = 50;
+const MIN_TAKER_GAS_LAMPORTS = 2_000_000;
+const ORDER_BASE = "https://api.jup.ag/swap/v2";
 
 export const jupBase = (env: Env) => (env.JUP_API_KEY ? "https://api.jup.ag" : "https://lite-api.jup.ag");
 export const jupHeaders = (env: Env) => ({
@@ -47,26 +39,29 @@ export const jupHeaders = (env: Env) => ({
 const resolveMint = (m: string) => (m === "usdc" ? USDC_MINT : m === "native" ? SOL_MINT : m);
 const now = () => Math.floor(Date.now() / 1000);
 
-type JupQuote = {
+type Order = {
+  transaction: string | null;
+  requestId: string;
+  router: string;
   inAmount: string;
   outAmount: string;
   otherAmountThreshold: string;
-  priceImpactPct: string;
-  swapUsdValue?: string;
-  slippageBps: number;
-  routePlan: unknown[];
-  error?: string;
-  errorCode?: string;
-};
-type JupIxs = {
-  computeBudgetInstructions: JupIx[];
-  setupInstructions: JupIx[];
-  swapInstruction: JupIx;
-  cleanupInstruction: JupIx | null;
-  otherInstructions?: JupIx[];
-  addressLookupTableAddresses: string[];
+  priceImpact: string;
+  feeBps: number;
+  gasless: boolean;
   prioritizationFeeLamports?: number;
+  lastValidBlockHeight?: number | string | null;
+  expireAt?: number | string | null;
+  errorCode?: number | null;
+  errorMessage?: string | null;
   error?: string;
+};
+type Executed = {
+  status: "Success" | "Failed";
+  signature?: string;
+  code: number;
+  error?: string;
+  slot?: number | string;
 };
 
 type QuoteInput = {
@@ -75,16 +70,52 @@ type QuoteInput = {
   amount: string;
   taker: string;
   slippageBps?: number;
-  priority?: "normal" | "fast" | "turbo";
 };
 
-// Builds the full transaction for a quote without recording anything. Shared by the real quote and the admin simulator.
-async function buildTx(
-  env: Env,
-  sql: Sql,
-  q: QuoteInput,
-  defaults: { slippageBps: number; priority: string },
-) {
+async function order(env: Env, params: Record<string, string>): Promise<Order> {
+  const r = await fetch(`${ORDER_BASE}/order?${new URLSearchParams(params)}`, { headers: jupHeaders(env) });
+  const j = (await r.json()) as Order;
+  if (!r.ok || j.error) {
+    const msg = (j.error ?? `${r.status}`).toLowerCase();
+    throw new HttpError(422, msg.includes("route") ? "no_route" : `jupiter: ${j.error ?? r.status}`);
+  }
+  return j;
+}
+
+// Token program per mint (SPL vs Token-2022) decides the token account address. Mints never change owner.
+const programCache = new Map<string, PublicKey>();
+async function tokenProgram(env: Env, mint: PublicKey) {
+  const k = mint.toBase58();
+  const hit = programCache.get(k);
+  if (hit) return hit;
+  const info = await connection(env).getAccountInfo(mint);
+  if (!info) throw notFound("token");
+  programCache.set(k, info.owner);
+  return info.owner;
+}
+
+// Neither router opens the buyer's token account for a wallet without SOL, so we open it first, once.
+async function ensureAta(env: Env, sql: Sql, userId: string, owner: PublicKey, mint: PublicKey) {
+  const program = await tokenProgram(env, mint);
+  const conn = connection(env);
+  if (await conn.getAccountInfo(ata(owner, mint, program))) return 0;
+  const gas = gasKeypair(env);
+  const { tx, lastValidBlockHeight } = await buildV0(
+    conn,
+    gas.publicKey,
+    [createAtaIdempotent(gas.publicKey, owner, mint, program)],
+    [],
+  );
+  tx.sign([gas]);
+  const sig = await conn.sendRawTransaction(tx.serialize(), { maxRetries: 3 });
+  const blockhash = tx.message.recentBlockhash;
+  await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+  await swapsRepo.recordRent(sql, userId, mint.toBase58(), ATA_RENT_LAMPORTS, now());
+  return ATA_RENT_LAMPORTS;
+}
+
+// Quotes and assembles without recording anything. Shared by the real quote and the admin dry run, which opens no accounts.
+async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | null) {
   const inputMint = resolveMint(q.inputMint),
     outputMint = resolveMint(q.outputMint);
   if (inputMint === outputMint) throw badRequest("inputMint and outputMint are the same");
@@ -92,189 +123,76 @@ async function buildTx(
   if (!side) throw new HttpError(422, "usdc_only");
   const amount = BigInt(q.amount);
   if (amount <= 0n) throw badRequest("amount must be > 0");
-  if (!env.GAS_WALLET_SECRET || !env.FEE_WALLET) throw new HttpError(503, "gas_wallet_not_configured");
-  const slippageBps = q.slippageBps ?? defaults.slippageBps;
-  let priority = (q.priority ?? defaults.priority) as keyof typeof PRIORITY;
+  if (!env.GAS_WALLET_SECRET) throw new HttpError(503, "gas_wallet_not_configured");
   const tokenMint = side === "buy" ? outputMint : inputMint;
-  const gas = gasKeypair(env);
   const taker = new PublicKey(q.taker);
   const conn = connection(env);
 
-  // Buys: the typed amount is what the user receives. Our fee and the one-off account rent go on top, and
-  // the sheet shows the total before they sign. Sells are unchanged: the fee comes off the proceeds.
-  const tokenPk = new PublicKey(tokenMint);
-  const usdcPk = new PublicKey(USDC_MINT);
-  const [stockRows, solUsdNow, usdcInfo, issuerFeeBps] = await Promise.all([
-    swapsRepo.stockMeta(sql, tokenMint),
-    solUsd(),
-    side === "buy" ? conn.getAccountInfo(ata(taker, usdcPk)) : Promise.resolve(null),
-    transferFeeBps(conn, tokenPk),
-  ]);
-  // Jupiter quotes before the mint's own transfer fee, so the fee must sit inside the slippage or every fill misses minOut.
-  const jupSlippageBps = slippageBps + issuerFeeBps;
-  const stock = stockRows[0];
+  const [stock] = await swapsRepo.stockMeta(sql, tokenMint);
   if (!stock) throw notFound("token");
-  // Backed suspends trading in the underlying: a fill would have nothing to settle against.
+  // The issuer suspended trading in the underlying: a fill would have nothing to settle against.
   if (stock.halted) throw new HttpError(409, `trading in ${stock.symbol} is halted by the issuer`);
-  const symbol = stock.symbol;
-  const lamportsToUsd = (l: number) => (solUsdNow ? Math.ceil((l / 1e9) * solUsdNow * 100) / 100 : 0);
-  const feeOnInput = side === "buy" ? (amount * BigInt(FEE_BPS)) / 10_000n : 0n;
+  const [issuerFeeBps, takerLamports, rentLamports] = await Promise.all([
+    transferFeeBps(conn, new PublicKey(tokenMint)),
+    conn.getBalance(taker, "confirmed"),
+    userId ? ensureAta(env, sql, userId, taker, new PublicKey(outputMint)) : 0,
+  ]);
 
-  // Prefer direct routes for stocks (no intermediate token accounts) unless multi-hop pays >0.5% more.
-  const getQuote = async (swapAmount: bigint, direct: boolean) => {
-    const r = await fetch(
-      `${jupBase(env)}/swap/v1/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${swapAmount}&slippageBps=${jupSlippageBps}&restrictIntermediateTokens=true${direct ? "&onlyDirectRoutes=true" : ""}`,
-      { headers: jupHeaders(env) },
-    );
-    const j = (await r.json()) as JupQuote;
-    return { ok: r.ok && !j.error, status: r.status, j };
+  const base: Record<string, string> = {
+    inputMint,
+    outputMint,
+    amount: amount.toString(),
+    taker: q.taker,
+    ...(q.slippageBps ? { slippageBps: String(q.slippageBps) } : {}),
+    ...(env.JUP_ULTRA_REFERRAL
+      ? { referralAccount: env.JUP_ULTRA_REFERRAL, referralFee: String(FEE_BPS) }
+      : {}),
   };
-  const route = async (swapAmount: bigint) => {
-    if (swapAmount <= 0n) throw new HttpError(422, "amount_too_small");
-    const [multi, direct] = await Promise.all([
-      getQuote(swapAmount, false),
-      stock ? getQuote(swapAmount, true) : null,
-    ]);
-    if (!multi.ok) {
-      const msg = (multi.j.error ?? "").toLowerCase();
-      throw new HttpError(
-        422,
-        msg.includes("route")
-          ? "no_route"
-          : msg.includes("amount")
-            ? "amount_too_small"
-            : `jupiter: ${multi.j.error ?? multi.status}`,
-      );
-    }
-    const jqj =
-      direct?.ok && Number(direct.j.outAmount) >= Number(multi.j.outAmount) * 0.995 ? direct.j : multi.j;
-    const ir = await fetch(`${jupBase(env)}/swap/v1/swap-instructions`, {
-      method: "POST",
-      headers: jupHeaders(env),
-      body: JSON.stringify({
-        quoteResponse: jqj,
-        userPublicKey: q.taker,
-        wrapAndUnwrapSol: false,
-        dynamicComputeUnitLimit: true,
-        prioritizationFeeLamports: { priorityLevelWithMaxLamports: { ...PRIORITY[priority], global: false } },
-      }),
+  let o = await order(env, base);
+  if (o.errorCode === 1) {
+    const usdc = await conn.getTokenAccountBalance(ata(taker, new PublicKey(USDC_MINT))).catch(() => null);
+    const heldUsd = Number(usdc?.value.uiAmount ?? 0);
+    throw new HttpError(422, "insufficient_usdc", {
+      neededUsd: side === "buy" ? Number(amount) / 1e6 : null,
+      heldUsd,
+      shortUsd: side === "buy" ? Math.ceil((Number(amount) / 1e6 - heldUsd) * 100) / 100 : null,
     });
-    const ixs = (await ir.json()) as JupIxs;
-    if (!ir.ok || ixs.error) throw new HttpError(422, `jupiter: ${ixs.error ?? ir.status}`);
-    // Accounts the route really opens: we front the SOL, the user pays the same value in USDC.
-    const setupAll = ixs.setupInstructions.map(fromJup);
-    const ataIxs = setupAll.filter((t) => t.programId.equals(ATA_PROGRAM) && t.keys[1]);
-    const [existing, alts] = await Promise.all([
-      ataIxs.length
-        ? conn.getMultipleAccountsInfo(ataIxs.map((t) => t.keys[1]!.pubkey))
-        : Promise.resolve([]),
-      lookupTables(conn, ixs.addressLookupTableAddresses),
-    ]);
-    let lamports = 0;
-    const rentMints: string[] = [];
-    const setup = setupAll.filter((t) => {
-      if (!t.programId.equals(ATA_PROGRAM) || !t.keys[0]) return true;
-      if (existing[ataIxs.indexOf(t)]) return false;
-      t.keys[0] = { pubkey: gas.publicKey, isSigner: true, isWritable: true };
-      lamports += ATA_RENT_LAMPORTS;
-      rentMints.push(t.keys[3]?.pubkey.toBase58() ?? "");
-      return true;
-    });
-    return { jqj, ixs, setup, alts, lamports, rentMints };
-  };
-
-  // The route itself names every account it has to open, so one pass settles both the swap and the rent.
-  const r = await route(amount);
-  const { jqj, ixs, setup, alts, rentMints } = r;
-  const rentLamports = side === "buy" ? r.lamports : 0;
-  const rentRaw = BigInt(Math.round(lamportsToUsd(rentLamports) * 1e6));
-  const rentUsd = Number(rentRaw) / 1e6;
-  const totalRaw = side === "buy" ? amount + feeOnInput + rentRaw : amount;
-  if (side === "buy") {
-    const held = usdcInfo
-      ? new DataView(usdcInfo.data.buffer, usdcInfo.data.byteOffset).getBigUint64(64, true)
-      : 0n;
-    if (held < totalRaw)
-      throw new HttpError(422, "insufficient_usdc", {
-        neededUsd: Number(totalRaw) / 1e6,
-        heldUsd: Number(held) / 1e6,
-        shortUsd: Math.ceil(Number(totalRaw - held) / 10_000) / 100,
-      });
   }
+  // A wallet with no SOL that Jupiter will not sponsor still trades: we pay, and Jupiter routes through pools only.
+  let payer: "user" | "jupiter" | "apeme" = o.gasless ? "jupiter" : "user";
+  if (!o.transaction || (!o.gasless && takerLamports < MIN_TAKER_GAS_LAMPORTS)) {
+    o = await order(env, { ...base, payer: gasKeypair(env).publicKey.toBase58() });
+    payer = "apeme";
+  }
+  if (!o.transaction) throw new HttpError(422, o.errorMessage ? `jupiter: ${o.errorMessage}` : "no_route");
 
-  const minOut = BigInt(jqj.otherAmountThreshold);
-  const feeOnOutput = side === "sell" ? (minOut * BigInt(FEE_BPS)) / 10_000n : 0n;
-  const feeRaw = side === "buy" ? feeOnInput : feeOnOutput;
-  const swapUsd = Number(jqj.swapUsdValue ?? 0);
-  const inUsd = side === "buy" ? Number(totalRaw) / 1e6 : swapUsd;
-  const issuerFeeUsd = Math.round(swapUsd * issuerFeeBps) / 10_000;
+  const tx = VersionedTransaction.deserialize(Buffer.from(o.transaction, "base64"));
+  const msgHash = await sha256hex(tx.message.serialize());
+  const feeRaw = env.JUP_ULTRA_REFERRAL
+    ? ((side === "buy" ? amount : BigInt(o.outAmount)) * BigInt(FEE_BPS)) / 10_000n
+    : 0n;
+  const inUsd = side === "buy" ? Number(amount) / 1e6 : Number(o.outAmount) / 1e6;
+  const issuerFeeUsd = Math.round(inUsd * issuerFeeBps) / 10_000;
   const outUsd =
-    (side === "buy" ? swapUsd : Number(BigInt(jqj.outAmount) - feeOnOutput) / 1e6) - issuerFeeUsd;
-  if (priority === "turbo" && inUsd < TURBO_MIN_USD) priority = "fast";
-
-  const usdcMint = new PublicKey(USDC_MINT),
-    feeWallet = new PublicKey(env.FEE_WALLET);
-  const chargeRaw = feeRaw + rentRaw;
-  const feeIx =
-    chargeRaw > 0n
-      ? [
-          createAtaIdempotent(gas.publicKey, feeWallet, usdcMint, TOKEN_PROGRAM),
-          transferChecked(
-            ata(taker, usdcMint),
-            usdcMint,
-            ata(feeWallet, usdcMint),
-            taker,
-            chargeRaw,
-            6,
-            TOKEN_PROGRAM,
-          ),
-        ]
-      : [];
-  const all = [
-    ...ixs.computeBudgetInstructions.map(fromJup),
-    ...setup,
-    ...(side === "buy" ? feeIx : []),
-    fromJup(ixs.swapInstruction),
-    ...(ixs.cleanupInstruction ? [fromJup(ixs.cleanupInstruction)] : []),
-    ...(side === "sell" ? feeIx : []),
-    ...(ixs.otherInstructions ?? []).map(fromJup),
-  ];
-  const { tx, lastValidBlockHeight } = await buildV0(conn, gas.publicKey, all, alts);
-  const msgBytes = tx.message.serialize();
-  const msgHash = await sha256hex(msgBytes);
-  const gasLamports = (ixs.prioritizationFeeLamports ?? 0) + 5000 * 2;
-  const premiumPct = stock?.premium_pct == null ? null : Number(stock.premium_pct);
-  const tokenDecimals = stock.decimals,
-    multiplier = stock ? Number(stock.multiplier ?? 1) : 1;
+    (side === "buy" ? inUsd - Number(feeRaw) / 1e6 : Number(BigInt(o.outAmount) - feeRaw) / 1e6) -
+    issuerFeeUsd;
   return {
-    tokenDecimals,
-    multiplier,
-    issuerFeeBps,
-    issuerFeeUsd,
-    rentUsd,
-    rentRaw,
+    o,
     tx,
     msgHash,
-    lastValidBlockHeight,
-    gasLamports,
-    rentLamports,
-    rentMints,
     side,
     inputMint,
     outputMint,
-    symbol,
     amount,
-    totalRaw,
-    jqj,
-    minOut,
     feeRaw,
     inUsd,
     outUsd,
-    slippageBps,
-    priority,
-    premiumPct,
+    issuerFeeBps,
+    issuerFeeUsd,
+    payer,
+    rentLamports,
     stock,
-    gasPubkey: gas.publicKey.toBase58(),
+    feePayer: tx.message.staticAccountKeys[0]!.toBase58(),
   };
 }
 
@@ -286,13 +204,10 @@ export async function depth(env: Env, sql: Sql, mint: string) {
   if (symbol === undefined) throw notFound("token");
   const levels = await Promise.all(
     DEPTH_LEVELS.map(async (usd) => {
-      const r = await fetch(
-        `${jupBase(env)}/swap/v1/quote?inputMint=${USDC_MINT}&outputMint=${mint}&amount=${usd * 1e6}&slippageBps=100&restrictIntermediateTokens=true`,
-        { headers: jupHeaders(env) },
+      const o = await order(env, { inputMint: USDC_MINT, outputMint: mint, amount: String(usd * 1e6) }).catch(
+        () => null,
       );
-      if (!r.ok) return { usd, impactPct: null };
-      const j = (await r.json()) as { priceImpactPct: string };
-      return { usd, impactPct: Math.round(Number(j.priceImpactPct) * 10_000) / 100 };
+      return { usd, impactPct: o ? Math.round(Number(o.priceImpact) * 100) / 100 : null };
     }),
   );
   return { mint, symbol, levels, asOf: now() };
@@ -308,32 +223,17 @@ export async function quote(
 ) {
   if (!wallets.some((w) => w.address === q.taker && w.chain === "solana"))
     throw new HttpError(403, "taker is not one of your wallets");
-  const b = await buildTx(env, sql, q, { slippageBps: settings.slippage_bps, priority: settings.priority });
-  const {
-    tx,
-    msgHash,
-    lastValidBlockHeight,
-    gasLamports,
-    rentLamports,
-    rentMints,
-    side,
-    inputMint,
-    outputMint,
-    symbol,
-    amount,
-    totalRaw,
-    jqj,
-    minOut,
-    feeRaw,
-    inUsd,
-    outUsd,
-    slippageBps,
-    priority,
-    premiumPct,
-    stock,
-  } = b;
+  const b = await buildOrder(
+    env,
+    sql,
+    { ...q, slippageBps: q.slippageBps ?? settings.slippage_bps },
+    user.id,
+  );
+  const { o, side, inputMint, outputMint, amount, feeRaw, inUsd, outUsd, stock } = b;
   const id = crypto.randomUUID();
   const t = now();
+  const priceImpactPct = Number(o.priceImpact);
+  const premiumPct = stock.premium_pct == null ? null : Number(stock.premium_pct);
   await swapsRepo.insertQuote(sql, {
     id,
     userId: user.id,
@@ -341,25 +241,26 @@ export async function quote(
     side,
     inputMint,
     outputMint,
-    symbol,
+    symbol: stock.symbol,
     inRaw: amount.toString(),
-    outRaw: jqj.outAmount,
-    minOutRaw: minOut.toString(),
+    outRaw: o.outAmount,
+    minOutRaw: o.otherAmountThreshold,
     inUsd,
     outUsd,
-    feeBps: FEE_BPS,
+    feeBps: feeRaw > 0n ? FEE_BPS : 0,
     feeRaw: feeRaw.toString(),
     feeUsd: Number(feeRaw) / 1e6,
-    priceImpactPct: Number(jqj.priceImpactPct) * 100,
+    priceImpactPct,
     premiumPct,
-    priority,
-    gasLamports,
-    rentLamports,
-    swapUsd: side === "buy" ? Number(amount) / 1e6 : inUsd,
-    rentUsd: b.rentUsd,
+    payer: b.payer,
+    router: o.router,
+    requestId: o.requestId,
+    gasLamports: b.payer === "apeme" ? (o.prioritizationFeeLamports ?? 0) + 5000 * 2 : 0,
+    rentLamports: b.rentLamports,
+    swapUsd: inUsd,
     issuerFeeUsd: b.issuerFeeUsd,
-    msgHash,
-    lastValidBlockHeight,
+    msgHash: b.msgHash,
+    lastValidBlockHeight: Number(o.lastValidBlockHeight ?? 0),
     t,
   });
   return {
@@ -367,40 +268,36 @@ export async function quote(
     side,
     inputMint,
     outputMint,
-    symbol,
+    symbol: stock.symbol,
     inAmount: amount.toString(),
-    outAmount: jqj.outAmount,
-    minOut: minOut.toString(),
-    inDecimals: side === "buy" ? 6 : b.tokenDecimals,
-    outDecimals: side === "buy" ? b.tokenDecimals : 6,
-    multiplier: b.multiplier,
+    outAmount: o.outAmount,
+    minOut: o.otherAmountThreshold,
+    inDecimals: side === "buy" ? 6 : stock.decimals,
+    outDecimals: side === "buy" ? stock.decimals : 6,
+    multiplier: Number(stock.multiplier ?? 1),
     inUsd,
     outUsd,
-    totalUsd: Number(totalRaw) / 1e6,
-    priceImpactPct: Number(jqj.priceImpactPct) * 100,
-    slippageBps,
-    suggestedSlippageBps: Math.min(500, Math.max(50, Math.ceil(Number(jqj.priceImpactPct) * 10_000) + 50)),
-    fee: { bps: FEE_BPS, amountRaw: feeRaw.toString(), mint: USDC_MINT, usd: Number(feeRaw) / 1e6 },
+    totalUsd: inUsd,
+    priceImpactPct,
+    slippageBps: q.slippageBps ?? settings.slippage_bps,
+    fee: {
+      bps: feeRaw > 0n ? FEE_BPS : 0,
+      amountRaw: feeRaw.toString(),
+      mint: USDC_MINT,
+      usd: Number(feeRaw) / 1e6,
+    },
+    routerFeeBps: o.feeBps,
+    router: o.router,
     issuerFee: b.issuerFeeBps
       ? { bps: b.issuerFeeBps, usd: b.issuerFeeUsd, note: "charged by the token issuer on every transfer" }
       : null,
-    rent: {
-      accounts: b.rentMints.length,
-      lamports: rentLamports,
-      usd: b.rentUsd,
-      amountRaw: b.rentRaw.toString(),
-      paidBy: "user",
-      note: b.rentUsd > 0 ? "one-time network fee to open the token account, charged in USDC" : null,
-    },
-    totalChargeUsd: (Number(feeRaw) + Number(b.rentRaw)) / 1e6,
-    swapUsd: side === "buy" ? Number(amount) / 1e6 : inUsd,
-    gas: { paidBy: "apeme", priority, lamports: gasLamports, rentLamports },
+    rent: { lamports: b.rentLamports, paidBy: "apeme", usd: 0 },
+    gas: { paidBy: b.payer, lamports: o.prioritizationFeeLamports ?? 0 },
     premiumPct,
-    markUsd: stock?.mark_usd == null ? null : Number(stock.mark_usd),
-    transaction: Buffer.from(tx.serialize()).toString("base64"),
-    signers: { feePayer: b.gasPubkey, user: q.taker },
-    expiresAt: t + QUOTE_TTL_S,
-    _rentMints: rentMints,
+    markUsd: stock.mark_usd == null ? null : Number(stock.mark_usd),
+    transaction: o.transaction,
+    signers: { feePayer: b.feePayer, user: q.taker },
+    expiresAt: Math.min(t + QUOTE_TTL_S, Number(o.expireAt ?? Infinity)),
   };
 }
 
@@ -428,6 +325,29 @@ export async function signedByUser(signedTransaction: string, wallet: string, ms
   return tx;
 }
 
+// Bookkeeping once a swap is on-chain: the referrer's cut of our fee, once per confirmed swap.
+async function settle(
+  sql: Sql,
+  row: { id: string; user_id: string; fee_usd: number | null; in_usd: number | null },
+  slot: number,
+  blockTime: number,
+  t: number,
+) {
+  const [done] = await swapsRepo.markConfirmed(sql, row.id, slot, blockTime);
+  if (!done) return;
+  const [ref] = await swapsRepo.referrerOf(sql, row.user_id);
+  if (ref && Number(row.fee_usd) > 0 && Number(row.in_usd) >= 5)
+    await swapsRepo.accrueReferral(
+      sql,
+      crypto.randomUUID(),
+      ref.referrer_user_id,
+      row.user_id,
+      row.id,
+      Number(row.fee_usd) * REFERRAL_SHARE,
+      t,
+    );
+}
+
 export async function submit(
   env: Env,
   sql: Sql,
@@ -447,55 +367,38 @@ export async function submit(
   if (n >= MAX_SPONSORED_PER_HOUR) throw new HttpError(429, "too many trades this hour");
 
   const tx = await signedByUser(signedTransaction, row.wallet, row.msg_hash);
-  const gas = gasKeypair(env);
-  tx.sign([gas]);
-  const conn = connection(env);
-  let sig: string;
-  try {
-    sig = await conn.sendRawTransaction(tx.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-      preflightCommitment: "confirmed",
-    });
-  } catch (e) {
-    const msg = (e as Error).message;
-    await swapsRepo.markFailed(sql, row.id, msg.slice(0, 300));
-    if (/blockhash not found/i.test(msg)) throw new HttpError(410, "quote_expired");
-    throw new HttpError(
-      422,
-      /slippage|0x1771|6001/i.test(msg)
-        ? "slippage"
-        : /insufficient|0x1\b|InsufficientFunds/i.test(msg)
-          ? "insufficient_funds"
-          : `send failed: ${msg.slice(0, 120)}`,
-    );
+  if (row.payer === "apeme") tx.sign([gasKeypair(env)]);
+  const signed = Buffer.from(tx.serialize()).toString("base64");
+  const r = await fetch(`${ORDER_BASE}/execute`, {
+    method: "POST",
+    headers: jupHeaders(env),
+    body: JSON.stringify({ signedTransaction: signed, requestId: row.jup_request_id }),
+  });
+  const x = (await r.json()) as Executed;
+  if (x.status !== "Success" || !x.signature) {
+    const err = `${x.code ?? r.status}: ${x.error ?? "execute failed"}`.slice(0, 300);
+    await swapsRepo.markFailed(sql, row.id, err);
+    if (x.code === -2003 || x.code === -1004) throw new HttpError(410, "quote_expired");
+    throw new HttpError(422, /slippage|0x1771|6001/i.test(err) ? "slippage" : `execute failed: ${err}`);
   }
-  await swapsRepo.markSubmitted(sql, row.id, sig, Buffer.from(tx.serialize()).toString("base64"), t);
-  return { signature: sig, status: "submitted" as const, requestId: row.id };
+  await swapsRepo.markSubmitted(sql, row.id, x.signature, signed, t);
+  await settle(sql, { ...row, id: row.id }, Number(x.slot ?? 0), t, t);
+  return {
+    signature: x.signature,
+    status: "confirmed" as const,
+    requestId: row.id,
+    slot: Number(x.slot ?? 0),
+  };
 }
 
-// Status by signature. Also settles our bookkeeping: confirmed → referral accrual, failed/expired → marked.
+// Status by signature, for polling. `/execute` already confirms, so this mostly reports; it still settles a
+// submitted row the chain confirmed after an execute timeout.
 export async function txStatus(env: Env, sql: Sql, signature: string) {
   const conn = connection(env);
   const [st] = (await conn.getSignatureStatuses([signature], { searchTransactionHistory: true })).value;
   const [row] = await swapsRepo.bySignature(sql, signature);
   const t = now();
-  // Not seen, or only processed (can still be dropped): rebroadcast while the blockhash is alive.
-  if (!st || st.confirmationStatus === "processed") {
-    if (
-      !st &&
-      row?.last_valid_block_height &&
-      (await conn.getBlockHeight("confirmed")) > Number(row.last_valid_block_height)
-    ) {
-      if (row.status === "submitted") await swapsRepo.markFailed(sql, row.id, "expired");
-      return { signature, status: "failed" as const, error: "expired" };
-    }
-    if (row?.status === "submitted" && row.signed_tx)
-      await conn
-        .sendRawTransaction(Buffer.from(row.signed_tx, "base64"), { skipPreflight: true, maxRetries: 0 })
-        .catch(() => {});
-    return { signature, status: "pending" as const };
-  }
+  if (!st || st.confirmationStatus === "processed") return { signature, status: "pending" as const };
   if (st.err) {
     if (row && row.status === "submitted")
       await swapsRepo.markFailed(sql, row.id, JSON.stringify(st.err).slice(0, 300));
@@ -503,28 +406,7 @@ export async function txStatus(env: Env, sql: Sql, signature: string) {
   }
   if (row && row.status === "submitted") {
     const blockTime = (await conn.getBlockTime(st.slot).catch(() => null)) ?? Number(row.submitted_at ?? t);
-    const [done] = await swapsRepo.markConfirmed(sql, row.id, st.slot, blockTime);
-    if (done) {
-      if (Number(row.rent_lamports) > 0)
-        await swapsRepo.recordRent(
-          sql,
-          row.user_id,
-          row.side === "buy" ? row.output_mint : row.input_mint,
-          Number(row.rent_lamports),
-          t,
-        );
-      const [ref] = await swapsRepo.referrerOf(sql, row.user_id);
-      if (ref && Number(row.fee_usd) > 0 && Number(row.in_usd) >= 5)
-        await swapsRepo.accrueReferral(
-          sql,
-          crypto.randomUUID(),
-          ref.referrer_user_id,
-          row.user_id,
-          row.id,
-          Number(row.fee_usd) * REFERRAL_SHARE,
-          t,
-        );
-    }
+    await settle(sql, row, st.slot, blockTime, t);
   }
   return { signature, status: "confirmed" as const, slot: st.slot, confirmations: st.confirmationStatus };
 }
@@ -534,35 +416,31 @@ export async function gasInfo(env: Env) {
   const gas = gasKeypair(env);
   const conn = connection(env);
   const lamports = await conn.getBalance(gas.publicKey, "confirmed");
-  return { address: gas.publicKey.toBase58(), sol: lamports / 1e9, feeWallet: env.FEE_WALLET ?? null };
+  return {
+    address: gas.publicKey.toBase58(),
+    sol: lamports / 1e9,
+    feeWallet: env.FEE_WALLET ?? null,
+    ultraReferral: env.JUP_ULTRA_REFERRAL ?? null,
+  };
 }
 
-// Ops: build a real swap tx for any funded wallet and simulate it (no signatures, no money). Proves the whole path.
+// Ops: assemble a real order for any funded wallet without recording or signing. Proves routing, fees and gas.
 export async function simulate(env: Env, sql: Sql, q: QuoteInput) {
-  const b = await buildTx(env, sql, q, { slippageBps: 100, priority: "normal" });
-  const conn = connection(env);
-  const sim = await conn.simulateTransaction(b.tx, {
-    sigVerify: false,
-    replaceRecentBlockhash: true,
-    commitment: "confirmed",
-  });
+  const b = await buildOrder(env, sql, q, null);
   return {
-    ok: !sim.value.err,
-    err: sim.value.err,
-    unitsConsumed: sim.value.unitsConsumed,
-    logs: (sim.value.logs ?? []).slice(-12),
     side: b.side,
-    symbol: b.symbol,
+    symbol: b.stock.symbol,
+    router: b.o.router,
+    gasless: b.o.gasless,
+    payer: b.payer,
+    feePayer: b.feePayer,
     inAmount: b.amount.toString(),
-    outAmount: b.jqj.outAmount,
+    outAmount: b.o.outAmount,
+    routerFeeBps: b.o.feeBps,
     feeRaw: b.feeRaw.toString(),
     inUsd: b.inUsd,
     outUsd: b.outUsd,
-    gasLamports: b.gasLamports,
     rentLamports: b.rentLamports,
-    rentUsd: b.rentUsd,
-    rentAccounts: b.rentMints.length,
-    feePayer: b.gasPubkey,
     txBytes: b.tx.serialize().length,
   };
 }

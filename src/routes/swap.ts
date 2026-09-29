@@ -14,7 +14,6 @@ const QuoteBody = z.object({
   amount: z.string().regex(/^\d+$/, "raw integer units of inputMint"),
   taker: Mint,
   slippageBps: z.number().int().min(10).max(500).optional(),
-  priority: z.enum(["normal", "fast", "turbo"]).optional(),
 });
 
 export const swap = new Hono<{ Bindings: Env; Variables: AuthVars }>();
@@ -22,15 +21,7 @@ swap.use("*", withDb, requireAuth, requireActive);
 
 swap.post("/quote", async (c) => {
   const b = parse(QuoteBody, await c.req.json());
-  const { _rentMints, ...res } = await quote(
-    c.env,
-    c.get("sql"),
-    c.get("user"),
-    c.get("wallets"),
-    c.get("settings"),
-    b,
-  );
-  return c.json(res);
+  return c.json(await quote(c.env, c.get("sql"), c.get("user"), c.get("wallets"), c.get("settings"), b));
 });
 
 swap.post("/submit", async (c) => {
