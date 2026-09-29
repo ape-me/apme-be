@@ -49,6 +49,7 @@ type Order = {
   router: string;
   inAmount: string;
   outAmount: string;
+  outUsdValue?: number;
   otherAmountThreshold: string;
   priceImpact: string;
   feeBps: number;
@@ -199,8 +200,9 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | nu
     : 0n;
   const inUsd = side === "buy" ? Number(amount) / 1e6 : Number(o.outAmount) / 1e6;
   const issuerFeeUsd = Math.round(inUsd * issuerFeeBps) / 10_000;
+  // `outAmount` is already net of Jupiter's cut and ours (both taken in USDC); what the user actually gets.
   const outUsd =
-    (side === "buy" ? inUsd - Number(feeRaw) / 1e6 : Number(BigInt(o.outAmount) - feeRaw) / 1e6) -
+    (side === "buy" ? Number(o.outUsdValue ?? inUsd - Number(feeRaw) / 1e6) : Number(o.outAmount) / 1e6) -
     issuerFeeUsd;
   return {
     o,
