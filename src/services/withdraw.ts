@@ -54,6 +54,7 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
     decimals: number,
     usd: number | null,
     rentLamports = 0,
+    issuerFeeBps = 0,
     ixs;
   if (mint === SOL_MINT) {
     const held = await conn.getBalance(from, "confirmed");
