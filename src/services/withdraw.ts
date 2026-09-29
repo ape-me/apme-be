@@ -26,6 +26,7 @@ import { signedByUser } from "./swap";
 const QUOTE_TTL_S = 60;
 const MAX_PER_HOUR = 20;
 const MIN_USDC_RAW = 1_000_000n;
+const SYSTEM_RENT_LAMPORTS = 890_880n; // a fresh wallet must land rent-exempt or the transfer fails
 const now = () => Math.floor(Date.now() / 1000);
 
 type WithdrawInput = { from: string; mint: string; amount: string; to: string };
@@ -57,6 +58,8 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
   if (mint === SOL_MINT) {
     const held = await conn.getBalance(from, "confirmed");
     if (BigInt(held) < amount) throw new HttpError(422, "insufficient_balance", { heldRaw: String(held) });
+    if (!toInfo && amount < SYSTEM_RENT_LAMPORTS)
+      throw new HttpError(422, "min_amount", { minRaw: SYSTEM_RENT_LAMPORTS.toString() });
     symbol = "SOL";
     decimals = 9;
     usd = (((await solPrice()) ?? 0) * Number(amount)) / 1e9 || null;
@@ -76,6 +79,7 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
     const held = BigInt(bal?.value.amount ?? "0");
     if (held < amount) throw new HttpError(422, "insufficient_balance", { heldRaw: held.toString() });
     decimals = info.decimals;
+    issuerFeeBps = info.feeBps;
     symbol = mint === USDC_MINT ? "USDC" : (stock[0]?.symbol ?? null);
     const px = mint === USDC_MINT ? 1 : stock[0]?.price_usd;
     usd = px ? Math.round((Number(amount) / 10 ** decimals) * px * 100) / 100 : null;
@@ -112,6 +116,7 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
     decimals,
     usd,
     fee: { bps: 0, usd: 0 },
+    issuerFeeBps,
     gas: { paidBy: "apeme" as const },
     rent: { lamports: rentLamports, paidBy: "apeme" as const },
     transaction: Buffer.from(tx.serialize()).toString("base64"),
