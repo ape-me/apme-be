@@ -11,6 +11,7 @@ import { admin } from "./routes/admin";
 import { me } from "./routes/me";
 import { swap, tx } from "./routes/swap";
 import { orders } from "./routes/orders";
+import { withdraw } from "./routes/withdraw";
 import { apelistRoute } from "./routes/apelist";
 
 export { Room } from "./do/room";
@@ -97,6 +98,7 @@ app.route("/v1/admin", admin);
 app.route("/v1/me", me);
 app.route("/v1/swap", swap);
 app.route("/v1/orders", orders);
+app.route("/v1/withdraw", withdraw);
 app.route("/v1/tx", tx);
 app.route("/ws", ws);
 

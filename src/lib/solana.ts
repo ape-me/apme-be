@@ -84,19 +84,28 @@ export const createAtaIdempotent = (
     ],
   });
 
-// Token-2022 transfer fee (bps) baked into the mint, e.g. PreStocks charge 1% on every transfer. Cached 10 min.
-const feeCache = new Map<string, { at: number; bps: number }>();
-export async function transferFeeBps(conn: Connection, mint: PublicKey): Promise<number> {
+// What a transfer needs to know about a mint: owning program, decimals, Token-2022 transfer fee (PreStocks
+// charge 1% on every transfer) and whether a transfer hook is armed. Mints never change owner; cached 10 min.
+export type MintInfo = { program: PublicKey; decimals: number; feeBps: number; hooked: boolean };
+const mintCache = new Map<string, { at: number; info: MintInfo }>();
+export async function mintInfo(conn: Connection, mint: PublicKey): Promise<MintInfo> {
   const k = mint.toBase58(),
-    hit = feeCache.get(k);
-  if (hit && Date.now() - hit.at < 600_000) return hit.bps;
-  const info = await conn.getParsedAccountInfo(mint);
-  const data = info.value?.data;
-  const exts = data && "parsed" in data ? (data.parsed.info?.extensions ?? []) : [];
-  const cfg = exts.find((e: { extension: string }) => e.extension === "transferFeeConfig")?.state;
-  const bps = Number(cfg?.newerTransferFee?.transferFeeBasisPoints ?? 0);
-  feeCache.set(k, { at: Date.now(), bps });
-  return bps;
+    hit = mintCache.get(k);
+  if (hit && Date.now() - hit.at < 600_000) return hit.info;
+  const acc = (await conn.getParsedAccountInfo(mint)).value;
+  const data = acc?.data;
+  if (!acc || !data || !("parsed" in data) || data.parsed.type !== "mint") throw new Error("not_a_mint");
+  const exts: { extension: string; state?: Record<string, unknown> }[] = data.parsed.info?.extensions ?? [];
+  const fee = exts.find((e) => e.extension === "transferFeeConfig")?.state as
+    { newerTransferFee?: { transferFeeBasisPoints?: number } } | undefined;
+  const info: MintInfo = {
+    program: acc.owner,
+    decimals: Number(data.parsed.info.decimals),
+    feeBps: Number(fee?.newerTransferFee?.transferFeeBasisPoints ?? 0),
+    hooked: exts.some((e) => e.extension === "transferHook" && e.state?.programId != null),
+  };
+  mintCache.set(k, { at: Date.now(), info });
+  return info;
 }
 
 // Lookup tables are append-only and Jupiter's rarely change; cache per isolate for 10 minutes.

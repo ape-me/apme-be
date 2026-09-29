@@ -10,7 +10,7 @@ import {
   gasKeypair,
   ata,
   createAtaIdempotent,
-  transferFeeBps,
+  mintInfo,
   buildV0,
   sha256hex,
   u8,
@@ -82,22 +82,10 @@ async function order(env: Env, params: Record<string, string>): Promise<Order> {
   return j;
 }
 
-// Token program per mint (SPL vs Token-2022) decides the token account address. Mints never change owner.
-const programCache = new Map<string, PublicKey>();
-async function tokenProgram(env: Env, mint: PublicKey) {
-  const k = mint.toBase58();
-  const hit = programCache.get(k);
-  if (hit) return hit;
-  const info = await connection(env).getAccountInfo(mint);
-  if (!info) throw notFound("token");
-  programCache.set(k, info.owner);
-  return info.owner;
-}
-
 // Neither router opens the buyer's token account for a wallet without SOL, so we open it first, once.
 async function ensureAta(env: Env, sql: Sql, userId: string, owner: PublicKey, mint: PublicKey) {
-  const program = await tokenProgram(env, mint);
   const conn = connection(env);
+  const { program } = await mintInfo(conn, mint);
   if (await conn.getAccountInfo(ata(owner, mint, program))) return 0;
   const gas = gasKeypair(env);
   const { tx, lastValidBlockHeight } = await buildV0(
@@ -132,8 +120,8 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | nu
   if (!stock) throw notFound("token");
   // The issuer suspended trading in the underlying: a fill would have nothing to settle against.
   if (stock.halted) throw new HttpError(409, `trading in ${stock.symbol} is halted by the issuer`);
-  const [issuerFeeBps, takerLamports, rentLamports] = await Promise.all([
-    transferFeeBps(conn, new PublicKey(tokenMint)),
+  const [{ feeBps: issuerFeeBps }, takerLamports, rentLamports] = await Promise.all([
+    mintInfo(conn, new PublicKey(tokenMint)),
     conn.getBalance(taker, "confirmed"),
     userId ? ensureAta(env, sql, userId, taker, new PublicKey(outputMint)) : 0,
   ]);
