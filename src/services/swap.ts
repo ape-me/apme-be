@@ -11,8 +11,8 @@ import {
   mintInfo,
   ultraReferralAccount,
   initReferralAccount,
-  initReferralTokenAccount,
-  referralAta,
+  createAtaIdempotent,
+  TOKEN_PROGRAM,
   buildV0,
   sha256hex,
   u8,
@@ -87,8 +87,8 @@ async function order(env: Env, params: Record<string, string>): Promise<Order> {
   return j;
 }
 
-// Our Swap v2 referral account and its USDC vault, created by the gas wallet the first time a quote needs them.
-// Jupiter pays our cut into the vault; the fee wallet is the partner and claims it. Never blocks a trade.
+// Our Swap v2 referral account and its USDC vault (the referral account's own token account, the form Ultra
+// looks for), created by the gas wallet the first time a quote needs them. Never blocks a trade.
 let referralReady = false;
 async function ensureReferral(env: Env): Promise<string | null> {
   const referral = ultraReferralAccount();
@@ -97,13 +97,13 @@ async function ensureReferral(env: Env): Promise<string | null> {
   try {
     const conn = connection(env);
     const usdc = new PublicKey(USDC_MINT);
-    const vault = new PublicKey(referralAta(referral.toBase58(), USDC_MINT));
+    const vault = ata(referral, usdc);
     const [acc, vaultAcc] = await conn.getMultipleAccountsInfo([referral, vault]);
     if (!acc || !vaultAcc) {
       const gas = gasKeypair(env);
       const ixs = [
         ...(acc ? [] : [initReferralAccount(gas.publicKey, new PublicKey(env.FEE_WALLET))]),
-        ...(vaultAcc ? [] : [initReferralTokenAccount(gas.publicKey, usdc)]),
+        ...(vaultAcc ? [] : [createAtaIdempotent(gas.publicKey, referral, usdc, TOKEN_PROGRAM)]),
       ];
       const { tx, lastValidBlockHeight } = await buildV0(conn, gas.publicKey, ixs, []);
       tx.sign([gas]);

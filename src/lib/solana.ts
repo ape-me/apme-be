@@ -22,7 +22,6 @@ const SYSTEM_PROGRAM = new PublicKey("11111111111111111111111111111111");
 const ULTRA_PROJECT = new PublicKey("DkiqsTrw1u1bYFumumC7sCG2S8K25qc2vemJFHyW2wJc"); // Jupiter Ultra referral project
 const REFERRAL_NAME = "stonks247";
 const DISC_INIT_REFERRAL = Buffer.from([241, 190, 107, 26, 244, 236, 119, 229]);
-const DISC_INIT_REFERRAL_TOKEN = Buffer.from([125, 18, 70, 95, 86, 179, 221, 190]);
 
 // Our Swap v2 referral account: a PDA of the project and name, so its address is fixed before it exists.
 export const ultraReferralAccount = () =>
@@ -48,26 +47,6 @@ export const initReferralAccount = (payer: PublicKey, partner: PublicKey) => {
     ],
   });
 };
-
-// Referral program `initialize_referral_token_account`: the vault Jupiter pays our cut into, one per mint.
-export const initReferralTokenAccount = (payer: PublicKey, mint: PublicKey) =>
-  new TransactionInstruction({
-    programId: REFERRAL_PROGRAM,
-    data: DISC_INIT_REFERRAL_TOKEN,
-    keys: [
-      { pubkey: payer, isSigner: true, isWritable: true },
-      { pubkey: ULTRA_PROJECT, isSigner: false, isWritable: false },
-      { pubkey: ultraReferralAccount(), isSigner: false, isWritable: false },
-      {
-        pubkey: new PublicKey(referralAta(ultraReferralAccount().toBase58(), mint.toBase58())),
-        isSigner: false,
-        isWritable: true,
-      },
-      { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM, isSigner: false, isWritable: false },
-    ],
-  });
 
 // Where Jupiter pays our cut. The referral program cannot open one for a Token-2022 mint, so only USDC has one.
 export const referralAta = (referral: string, mint: string) =>
