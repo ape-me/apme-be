@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "../env";
 import { verifyTurnstile } from "../lib/turnstile";
-import { apelist, normalizeEmail, newToken, ipHash } from "../services/apelist";
+import { apelist, normalizeEmail, ipHash } from "../services/apelist";
 
 export const apelistRoute = new Hono<{ Bindings: Env }>();
 
@@ -50,17 +50,15 @@ apelistRoute.post("/", async (c) => {
   const ref = typeof body.ref === "string" && body.ref.trim() ? body.ref.trim().slice(0, 64) : null;
   const ua = (c.req.header("user-agent") ?? "").slice(0, 256) || null;
   try {
-    const token = newToken();
     const created = await apelist.add(
       c.env,
       email,
-      token,
       await ipHash(ip, c.env.IP_SALT ?? "stonks247"),
       ref,
       ua,
     );
     if (!created) return c.json({ ok: true }, 200);
-    c.executionCtx.waitUntil(apelist.sendConfirmation(c.env, email, token));
+    c.executionCtx.waitUntil(apelist.sendWelcome(c.env, email));
     return c.json({ ok: true }, 201);
   } catch (e) {
     console.error("apelist insert", (e as Error).message);
@@ -79,13 +77,3 @@ apelistRoute.get("/count", async (c) => {
   }
 });
 
-apelistRoute.get("/confirm", async (c) => {
-  const t = c.req.query("t") ?? "";
-  let ok = false;
-  try {
-    ok = await apelist.confirm(c.env, t);
-  } catch (e) {
-    console.error("apelist confirm", (e as Error).message);
-  }
-  return c.redirect(`${c.env.SITE_URL}/?confirmed=${ok ? 1 : 0}`, 302);
-});

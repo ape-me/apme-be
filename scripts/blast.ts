@@ -1,4 +1,4 @@
-// Launch-day blast. Sends "Stonks247 is live" to every confirmed, not-yet-blasted signup in batches of 100 via Resend,
+// Launch-day blast. Sends "Stonks247 is live" to every not-yet-blasted signup in batches of 100 via Resend,
 // stamping blasted_at so a re-run skips rows already sent. Never run automatically.
 //
 //   RESEND_API_KEY=re_xxx APP_STORE_URL=https://apps.apple.com/... bun run scripts/blast.ts
@@ -24,7 +24,7 @@ const html = `<p>Stonks247 is live.</p><p>tokenized stocks, from your phone. now
 let sent = 0;
 for (;;) {
   const rows = await d1<{ email: string }>(
-    "SELECT email FROM apelist WHERE confirmed_at IS NOT NULL AND blasted_at IS NULL ORDER BY created_at LIMIT 100",
+    "SELECT email FROM apelist WHERE blasted_at IS NULL ORDER BY created_at LIMIT 100",
   );
   if (rows.length === 0) break;
   const r = await fetch("https://api.resend.com/emails/batch", {
