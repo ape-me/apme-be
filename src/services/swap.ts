@@ -5,11 +5,9 @@ import { HttpError, badRequest, notFound } from "../lib/errors";
 import {
   USDC_MINT,
   SOL_MINT,
-  ATA_RENT_LAMPORTS,
   connection,
   gasKeypair,
   ata,
-  createAtaIdempotent,
   mintInfo,
   ultraReferralAccount,
   initReferralAccount,
@@ -50,6 +48,8 @@ type Order = {
   inAmount: string;
   outAmount: string;
   outUsdValue?: number;
+  rentFeeLamports?: number;
+  rentFeePayer?: string;
   otherAmountThreshold: string;
   priceImpact: string;
   feeBps: number;
@@ -122,28 +122,8 @@ async function ensureReferral(env: Env): Promise<string | null> {
   }
 }
 
-// Neither router opens the buyer's token account for a wallet without SOL, so we open it first, once.
-async function ensureAta(env: Env, sql: Sql, userId: string, owner: PublicKey, mint: PublicKey) {
-  const conn = connection(env);
-  const { program } = await mintInfo(conn, mint);
-  if (await conn.getAccountInfo(ata(owner, mint, program))) return 0;
-  const gas = gasKeypair(env);
-  const { tx, lastValidBlockHeight } = await buildV0(
-    conn,
-    gas.publicKey,
-    [createAtaIdempotent(gas.publicKey, owner, mint, program)],
-    [],
-  );
-  tx.sign([gas]);
-  const sig = await conn.sendRawTransaction(tx.serialize(), { maxRetries: 3 });
-  const blockhash = tx.message.recentBlockhash;
-  await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-  await swapsRepo.recordRent(sql, userId, mint.toBase58(), ATA_RENT_LAMPORTS, now());
-  return ATA_RENT_LAMPORTS;
-}
-
 // Quotes and assembles without recording anything. Shared by the real quote and the admin dry run, which opens no accounts.
-async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | null) {
+async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
   const inputMint = resolveMint(q.inputMint),
     outputMint = resolveMint(q.outputMint);
   if (inputMint === outputMint) throw badRequest("inputMint and outputMint are the same");
@@ -160,10 +140,9 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | nu
   if (!stock) throw notFound("token");
   // The issuer suspended trading in the underlying: a fill would have nothing to settle against.
   if (stock.halted) throw new HttpError(409, `trading in ${stock.symbol} is halted by the issuer`);
-  const [{ feeBps: issuerFeeBps }, takerLamports, rentLamports, referral] = await Promise.all([
+  const [{ feeBps: issuerFeeBps }, takerLamports, referral] = await Promise.all([
     mintInfo(conn, new PublicKey(tokenMint)),
     conn.getBalance(taker, "confirmed"),
-    userId ? ensureAta(env, sql, userId, taker, new PublicKey(outputMint)) : 0,
     ensureReferral(env),
   ]);
 
@@ -193,6 +172,15 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | nu
   }
   if (!o.transaction) throw new HttpError(422, o.errorMessage ? `jupiter: ${o.errorMessage}` : "no_route");
 
+  // Any token account the order opens is billed by Jupiter to whoever it names; ours only on the payer fallback.
+  const rentLamports = Number(o.rentFeeLamports ?? 0);
+  const rentPaidBy = !rentLamports
+    ? null
+    : o.rentFeePayer === q.taker
+      ? "user"
+      : payer === "apeme"
+        ? "apeme"
+        : "jupiter";
   const tx = VersionedTransaction.deserialize(Buffer.from(o.transaction, "base64"));
   const msgHash = await sha256hex(tx.message.serialize());
   const feeRaw = referral
@@ -219,6 +207,7 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | nu
     issuerFeeUsd,
     payer,
     rentLamports,
+    rentPaidBy,
     stock,
     feePayer: tx.message.staticAccountKeys[0]!.toBase58(),
   };
@@ -251,12 +240,7 @@ export async function quote(
 ) {
   if (!wallets.some((w) => w.address === q.taker && w.chain === "solana"))
     throw new HttpError(403, "taker is not one of your wallets");
-  const b = await buildOrder(
-    env,
-    sql,
-    { ...q, slippageBps: q.slippageBps ?? settings.slippage_bps },
-    user.id,
-  );
+  const b = await buildOrder(env, sql, { ...q, slippageBps: q.slippageBps ?? settings.slippage_bps });
   const { o, side, inputMint, outputMint, amount, feeRaw, inUsd, outUsd, stock } = b;
   const id = crypto.randomUUID();
   const t = now();
@@ -284,7 +268,7 @@ export async function quote(
     router: o.router,
     requestId: o.requestId,
     gasLamports: b.payer === "apeme" ? (o.prioritizationFeeLamports ?? 0) + 5000 * 2 : 0,
-    rentLamports: b.rentLamports,
+    rentLamports: b.rentPaidBy === "apeme" ? b.rentLamports : 0,
     swapUsd: inUsd,
     issuerFeeUsd: b.issuerFeeUsd,
     msgHash: b.msgHash,
@@ -319,7 +303,7 @@ export async function quote(
     issuerFee: b.issuerFeeBps
       ? { bps: b.issuerFeeBps, usd: b.issuerFeeUsd, note: "charged by the token issuer on every transfer" }
       : null,
-    rent: { lamports: b.rentLamports, paidBy: "apeme", usd: 0 },
+    rent: { lamports: b.rentLamports, paidBy: b.rentPaidBy },
     gas: { paidBy: b.payer, lamports: o.prioritizationFeeLamports ?? 0 },
     premiumPct,
     markUsd: stock.mark_usd == null ? null : Number(stock.mark_usd),
@@ -454,7 +438,7 @@ export async function gasInfo(env: Env) {
 
 // Ops: assemble a real order for any funded wallet without recording or signing. Proves routing, fees and gas.
 export async function simulate(env: Env, sql: Sql, q: QuoteInput) {
-  const b = await buildOrder(env, sql, q, null);
+  const b = await buildOrder(env, sql, q);
   return {
     side: b.side,
     symbol: b.stock.symbol,
@@ -469,6 +453,7 @@ export async function simulate(env: Env, sql: Sql, q: QuoteInput) {
     inUsd: b.inUsd,
     outUsd: b.outUsd,
     rentLamports: b.rentLamports,
+    rentPaidBy: b.rentPaidBy,
     txBytes: b.tx.serialize().length,
   };
 }

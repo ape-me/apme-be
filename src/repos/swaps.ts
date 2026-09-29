@@ -115,8 +115,6 @@ export const swapsRepo = {
     sql<
       { n: number }[]
     >`SELECT COUNT(*)::int AS n FROM swaps WHERE user_id = ${userId} AND status <> 'quoted' AND created_at > ${since}`,
-  recordRent: (sql: Sql, userId: string, mint: string, lamports: number, t: number) =>
-    sql`INSERT INTO sponsored_rent (user_id, mint, lamports, paid_at) VALUES (${userId}, ${mint}, ${lamports}, ${t}) ON CONFLICT DO NOTHING`,
   // Referrer's cut of our fee, once per confirmed swap (swap_id is unique).
   accrueReferral: (
     sql: Sql,
