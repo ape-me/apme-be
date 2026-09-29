@@ -11,6 +11,10 @@ import {
   ata,
   createAtaIdempotent,
   mintInfo,
+  ultraReferralAccount,
+  initReferralAccount,
+  initReferralTokenAccount,
+  referralAta,
   buildV0,
   sha256hex,
   u8,
@@ -82,6 +86,41 @@ async function order(env: Env, params: Record<string, string>): Promise<Order> {
   return j;
 }
 
+// Our Swap v2 referral account and its USDC vault, created by the gas wallet the first time a quote needs them.
+// Jupiter pays our cut into the vault; the fee wallet is the partner and claims it. Never blocks a trade.
+let referralReady = false;
+async function ensureReferral(env: Env): Promise<string | null> {
+  const referral = ultraReferralAccount();
+  if (referralReady) return referral.toBase58();
+  if (!env.FEE_WALLET) return null;
+  try {
+    const conn = connection(env);
+    const usdc = new PublicKey(USDC_MINT);
+    const vault = new PublicKey(referralAta(referral.toBase58(), USDC_MINT));
+    const [acc, vaultAcc] = await conn.getMultipleAccountsInfo([referral, vault]);
+    if (!acc || !vaultAcc) {
+      const gas = gasKeypair(env);
+      const ixs = [
+        ...(acc ? [] : [initReferralAccount(gas.publicKey, new PublicKey(env.FEE_WALLET))]),
+        ...(vaultAcc ? [] : [initReferralTokenAccount(gas.publicKey, usdc)]),
+      ];
+      const { tx, lastValidBlockHeight } = await buildV0(conn, gas.publicKey, ixs, []);
+      tx.sign([gas]);
+      const signature = await conn.sendRawTransaction(tx.serialize(), { maxRetries: 3 });
+      await conn.confirmTransaction(
+        { signature, blockhash: tx.message.recentBlockhash, lastValidBlockHeight },
+        "confirmed",
+      );
+      console.log("referral: created", referral.toBase58(), signature);
+    }
+    referralReady = true;
+    return referral.toBase58();
+  } catch (e) {
+    console.error("referral: not ready, quoting without fee", (e as Error).message);
+    return null;
+  }
+}
+
 // Neither router opens the buyer's token account for a wallet without SOL, so we open it first, once.
 async function ensureAta(env: Env, sql: Sql, userId: string, owner: PublicKey, mint: PublicKey) {
   const conn = connection(env);
@@ -120,10 +159,11 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | nu
   if (!stock) throw notFound("token");
   // The issuer suspended trading in the underlying: a fill would have nothing to settle against.
   if (stock.halted) throw new HttpError(409, `trading in ${stock.symbol} is halted by the issuer`);
-  const [{ feeBps: issuerFeeBps }, takerLamports, rentLamports] = await Promise.all([
+  const [{ feeBps: issuerFeeBps }, takerLamports, rentLamports, referral] = await Promise.all([
     mintInfo(conn, new PublicKey(tokenMint)),
     conn.getBalance(taker, "confirmed"),
     userId ? ensureAta(env, sql, userId, taker, new PublicKey(outputMint)) : 0,
+    ensureReferral(env),
   ]);
 
   const base: Record<string, string> = {
@@ -132,9 +172,7 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | nu
     amount: amount.toString(),
     taker: q.taker,
     ...(q.slippageBps ? { slippageBps: String(q.slippageBps) } : {}),
-    ...(env.JUP_ULTRA_REFERRAL
-      ? { referralAccount: env.JUP_ULTRA_REFERRAL, referralFee: String(FEE_BPS) }
-      : {}),
+    ...(referral ? { referralAccount: referral, referralFee: String(FEE_BPS) } : {}),
   };
   let o = await order(env, base);
   if (o.errorCode === 1) {
@@ -156,7 +194,7 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput, userId: string | nu
 
   const tx = VersionedTransaction.deserialize(Buffer.from(o.transaction, "base64"));
   const msgHash = await sha256hex(tx.message.serialize());
-  const feeRaw = env.JUP_ULTRA_REFERRAL
+  const feeRaw = referral
     ? ((side === "buy" ? amount : BigInt(o.outAmount)) * BigInt(FEE_BPS)) / 10_000n
     : 0n;
   const inUsd = side === "buy" ? Number(amount) / 1e6 : Number(o.outAmount) / 1e6;
@@ -408,7 +446,7 @@ export async function gasInfo(env: Env) {
     address: gas.publicKey.toBase58(),
     sol: lamports / 1e9,
     feeWallet: env.FEE_WALLET ?? null,
-    ultraReferral: env.JUP_ULTRA_REFERRAL ?? null,
+    ultraReferral: ultraReferralAccount().toBase58(),
   };
 }
 
