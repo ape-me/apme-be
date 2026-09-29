@@ -22,7 +22,6 @@ export function normalizeEmail(raw: unknown): string | null {
   return e;
 }
 
-
 // sha256(ip + daily salt): lets us spot abuse within a day without ever storing an IP.
 export async function ipHash(ip: string, salt: string): Promise<string> {
   const day = new Date().toISOString().slice(0, 10);
@@ -32,7 +31,13 @@ export async function ipHash(ip: string, salt: string): Promise<string> {
 
 export const apelist = {
   /** Insert if new. Returns true when the row was created, false when the email already existed. */
-  add: async (env: Env, email: string, ip_hash: string, ref: string | null, ua: string | null): Promise<boolean> => {
+  add: async (
+    env: Env,
+    email: string,
+    ip_hash: string,
+    ref: string | null,
+    ua: string | null,
+  ): Promise<boolean> => {
     const r = await env.DB.prepare(
       "INSERT INTO apelist (email, ip_hash, ref, user_agent) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(email) DO NOTHING",
     )

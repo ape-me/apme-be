@@ -50,13 +50,7 @@ apelistRoute.post("/", async (c) => {
   const ref = typeof body.ref === "string" && body.ref.trim() ? body.ref.trim().slice(0, 64) : null;
   const ua = (c.req.header("user-agent") ?? "").slice(0, 256) || null;
   try {
-    const created = await apelist.add(
-      c.env,
-      email,
-      await ipHash(ip, c.env.IP_SALT ?? "stonks247"),
-      ref,
-      ua,
-    );
+    const created = await apelist.add(c.env, email, await ipHash(ip, c.env.IP_SALT ?? "stonks247"), ref, ua);
     if (!created) return c.json({ ok: true }, 200);
     c.executionCtx.waitUntil(apelist.sendWelcome(c.env, email));
     return c.json({ ok: true }, 201);
@@ -76,4 +70,3 @@ apelistRoute.get("/count", async (c) => {
     return fail(c, 500, "server");
   }
 });
-
