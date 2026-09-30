@@ -16,9 +16,18 @@ const call = async (env: Env, method: string, params: unknown[]) => {
 };
 
 type Balance = { mint: string; amount: number; raw: string; decimals: number };
+export type TokenAccount = {
+  pubkey: string;
+  program: string;
+  mint: string;
+  amount: string;
+  decimals: number;
+  uiAmount: number | null;
+  withheld: string;
+};
 
-// SOL plus every SPL / Token-2022 balance a wallet holds. Empty accounts are dropped.
-export async function balances(env: Env, owner: string): Promise<{ sol: number; tokens: Balance[] }> {
+// Every SPL / Token-2022 account a wallet owns, empty ones included, with any Token-2022 fee still withheld in it.
+export async function tokenAccounts(env: Env, owner: string): Promise<TokenAccount[]> {
   const parsed = (program: string) =>
     call(env, "getTokenAccountsByOwner", [
       owner,
@@ -26,31 +35,51 @@ export async function balances(env: Env, owner: string): Promise<{ sol: number; 
       { encoding: "jsonParsed", commitment: "confirmed" },
     ]) as Promise<{
       value: {
+        pubkey: string;
         account: {
           data: {
             parsed: {
               info: {
                 mint: string;
                 tokenAmount: { amount: string; decimals: number; uiAmount: number | null };
+                extensions?: { extension: string; state?: { withheldAmount?: string | number } }[];
               };
             };
           };
         };
       }[];
     }>;
-  const [lamports, a, b] = await Promise.all([
+  const [a, b] = await Promise.all([parsed(TOKEN), parsed(TOKEN_2022)]);
+  return [...a.value.map((x) => [TOKEN, x] as const), ...b.value.map((x) => [TOKEN_2022, x] as const)].map(
+    ([program, x]) => {
+      const i = x.account.data.parsed.info;
+      const fee = i.extensions?.find((e) => e.extension === "transferFeeAmount")?.state?.withheldAmount;
+      return {
+        pubkey: x.pubkey,
+        program,
+        mint: i.mint,
+        amount: i.tokenAmount.amount,
+        decimals: i.tokenAmount.decimals,
+        uiAmount: i.tokenAmount.uiAmount,
+        withheld: String(fee ?? "0"),
+      };
+    },
+  );
+}
+
+// SOL plus every SPL / Token-2022 balance a wallet holds. Empty accounts are dropped.
+export async function balances(env: Env, owner: string): Promise<{ sol: number; tokens: Balance[] }> {
+  const [lamports, accounts] = await Promise.all([
     call(env, "getBalance", [owner, { commitment: "confirmed" }]) as Promise<{ value: number }>,
-    parsed(TOKEN),
-    parsed(TOKEN_2022),
+    tokenAccounts(env, owner),
   ]);
-  const tokens = [...a.value, ...b.value]
-    .map((x) => x.account.data.parsed.info)
-    .filter((i) => i.tokenAmount.amount !== "0")
+  const tokens = accounts
+    .filter((i) => i.amount !== "0")
     .map((i) => ({
       mint: i.mint,
-      amount: i.tokenAmount.uiAmount ?? Number(i.tokenAmount.amount) / 10 ** i.tokenAmount.decimals,
-      raw: i.tokenAmount.amount,
-      decimals: i.tokenAmount.decimals,
+      amount: i.uiAmount ?? Number(i.amount) / 10 ** i.decimals,
+      raw: i.amount,
+      decimals: i.decimals,
     }));
   return { sol: lamports.value / 1e9, tokens };
 }

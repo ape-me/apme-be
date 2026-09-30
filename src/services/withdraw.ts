@@ -13,11 +13,12 @@ import {
   ata,
   createAtaIdempotent,
   transferChecked,
+  closeAccount,
   mintInfo,
   buildV0,
   sha256hex,
 } from "../lib/solana";
-import { solPrice } from "../lib/rpc";
+import { solPrice, tokenAccounts } from "../lib/rpc";
 import { swapsRepo } from "../repos/swaps";
 import { withdrawalsRepo } from "../repos/withdrawals";
 import type { UserRow, WalletRow } from "../repos/account";
@@ -122,6 +123,57 @@ export async function quote(env: Env, sql: Sql, user: UserRow, wallets: WalletRo
     rent: { lamports: rentLamports, paidBy: "apeme" as const },
     transaction: Buffer.from(tx.serialize()).toString("base64"),
     signers: { feePayer: gas.publicKey.toBase58(), user: q.from },
+    expiresAt: t + QUOTE_TTL_S,
+  };
+}
+
+// Every empty token account the wallet still pays rent on, closed in one transaction, rent back to the wallet.
+// USDC stays open: deposits land there. A Token-2022 account with a fee still withheld cannot close.
+export async function reclaim(env: Env, sql: Sql, user: UserRow, wallets: WalletRow[], from: string) {
+  if (!wallets.some((w) => w.chain === "solana" && w.address === from)) throw notFound("wallet");
+  if (!env.GAS_WALLET_SECRET) throw new HttpError(503, "gas_wallet_not_configured");
+  const owner = new PublicKey(from);
+  const empty = (await tokenAccounts(env, from)).filter(
+    (a) => a.amount === "0" && a.withheld === "0" && a.mint !== USDC_MINT,
+  );
+  if (!empty.length) throw new HttpError(422, "nothing_to_reclaim");
+  const conn = connection(env);
+  const gas = gasKeypair(env);
+  const batch = empty.slice(0, 20);
+  const lamports = (await conn.getMultipleAccountsInfo(batch.map((a) => new PublicKey(a.pubkey)))).reduce(
+    (n, a) => n + (a?.lamports ?? 0),
+    0,
+  );
+  const { tx } = await buildV0(
+    conn,
+    gas.publicKey,
+    batch.map((a) => closeAccount(new PublicKey(a.pubkey), owner, owner, new PublicKey(a.program))),
+    [],
+  );
+  const id = crypto.randomUUID(),
+    t = now();
+  await withdrawalsRepo.insert(sql, {
+    id,
+    userId: user.id,
+    wallet: from,
+    to: from,
+    mint: SOL_MINT,
+    symbol: "SOL",
+    amountRaw: String(lamports),
+    decimals: 9,
+    usd: ((await solPrice()) ?? 0) * (lamports / 1e9) || null,
+    rentLamports: 0,
+    msgHash: await sha256hex(tx.message.serialize()),
+    t,
+  });
+  return {
+    requestId: id,
+    accounts: batch.length,
+    remaining: empty.length - batch.length,
+    lamports,
+    sol: lamports / 1e9,
+    transaction: Buffer.from(tx.serialize()).toString("base64"),
+    signers: { feePayer: gas.publicKey.toBase58(), user: from },
     expiresAt: t + QUOTE_TTL_S,
   };
 }

@@ -93,6 +93,18 @@ export const transferChecked = (
   });
 };
 
+// SPL Token / Token-2022 `CloseAccount` (ix 9): the account's rent goes to `dest`. Only an empty account closes.
+export const closeAccount = (account: PublicKey, dest: PublicKey, owner: PublicKey, program: PublicKey) =>
+  new TransactionInstruction({
+    programId: program,
+    data: Buffer.from([9]),
+    keys: [
+      { pubkey: account, isSigner: false, isWritable: true },
+      { pubkey: dest, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: true, isWritable: false },
+    ],
+  });
+
 // ATA `CreateIdempotent` (ix 1), rent paid by `payer`.
 export const createAtaIdempotent = (
   payer: PublicKey,

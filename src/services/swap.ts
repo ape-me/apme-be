@@ -30,7 +30,6 @@ const FEE_BPS = 100;
 const REFERRAL_SHARE = 0.2;
 const MAX_SPONSORED_PER_HOUR = 20;
 const QUOTE_TTL_S = 45;
-const MIN_TAKER_GAS_LAMPORTS = 2_000_000;
 const ORDER_BASE = "https://api.jup.ag/swap/v2";
 
 export const jupBase = (env: Env) => (env.JUP_API_KEY ? "https://api.jup.ag" : "https://lite-api.jup.ag");
@@ -143,9 +142,8 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
   // The issuer suspended trading in the underlying: a fill would have nothing to settle against.
   if (stock.halted) throw new HttpError(409, `trading in ${stock.symbol} is halted by the issuer`);
   if (!tradable(stock)) throw new HttpError(409, "market_closed", { opensAt: "Sunday 8pm ET" });
-  const [{ feeBps: issuerFeeBps }, takerLamports, referral] = await Promise.all([
+  const [{ feeBps: issuerFeeBps }, referral] = await Promise.all([
     mintInfo(conn, new PublicKey(tokenMint)),
-    conn.getBalance(taker, "confirmed"),
     ensureReferral(env),
   ]);
 
@@ -179,11 +177,16 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
       shortUsd: side === "buy" ? Math.ceil((Number(amount) / 1e6 - heldUsd) * 100) / 100 : null,
     });
   }
-  // A wallet with no SOL that Jupiter will not sponsor still trades: we pay, and Jupiter routes through pools only.
+  // Jupiter bills a wallet that holds SOL for its own gas and token-account rent, and refuses one with none it
+  // will not sponsor. Both get our gas wallet as payer instead; only an RFQ-only name (Ondo) cannot take an alternate
+  // payer, and there the wallet's own SOL is used and reported as such.
   let payer: "user" | "jupiter" | "apeme" = o.gasless ? "jupiter" : "user";
-  if (!o.transaction || (!o.gasless && takerLamports < MIN_TAKER_GAS_LAMPORTS)) {
-    o = await order(env, { ...base, payer: gasKeypair(env).publicKey.toBase58() });
-    payer = "apeme";
+  if (!o.transaction || !o.gasless) {
+    const ours = await order(env, { ...base, payer: gasKeypair(env).publicKey.toBase58() }).catch(() => null);
+    if (ours?.transaction) {
+      o = ours;
+      payer = "apeme";
+    }
   }
   if (!o.transaction) throw new HttpError(422, o.errorMessage ? `jupiter: ${o.errorMessage}` : "no_route");
 
