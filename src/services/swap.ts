@@ -157,6 +157,16 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
     ...(q.slippageBps ? { slippageBps: String(q.slippageBps) } : {}),
     ...(referral ? { referralAccount: referral, referralFee: String(FEE_BPS) } : {}),
   };
+  // What Jupiter would allow on its own for this pair; a taker-less order is a quote, nothing is built.
+  const suggestedSlippageBps = q.slippageBps
+    ? Number(
+        (
+          await order(env, { inputMint, outputMint, amount: amount.toString() }).catch(() => ({
+            slippageBps: undefined,
+          }))
+        ).slippageBps ?? 0,
+      )
+    : null;
   let o = await order(env, base);
   if (o.errorCode === 1) {
     const usdc = await conn.getTokenAccountBalance(ata(taker, new PublicKey(USDC_MINT))).catch(() => null);
@@ -216,6 +226,8 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
     rentPaidBy,
     stock,
     feePayer: tx.message.staticAccountKeys[0]!.toBase58(),
+    slippageBps: Number(o.slippageBps ?? q.slippageBps ?? 0),
+    suggestedSlippageBps: suggestedSlippageBps ?? Number(o.slippageBps ?? 0),
   };
 }
 
@@ -301,7 +313,8 @@ export async function quote(
     outUsd,
     totalUsd: inUsd,
     priceImpactPct,
-    slippageBps: Number(o.slippageBps ?? q.slippageBps ?? 0),
+    slippageBps: b.slippageBps,
+    suggestedSlippageBps: b.suggestedSlippageBps,
     fee: {
       bps: feeRaw > 0n ? FEE_BPS : 0,
       amountRaw: feeRaw.toString(),
@@ -401,7 +414,15 @@ export async function submit(
     const err = `${x.code ?? r.status}: ${x.error ?? "execute failed"}`.slice(0, 300);
     await swapsRepo.markFailed(sql, row.id, err);
     if (x.code === -2003 || x.code === -1004) throw new HttpError(410, "quote_expired");
-    throw new HttpError(422, /slippage|0x1771|6001/i.test(err) ? "slippage" : `execute failed: ${err}`);
+    if (/slippage|0x1771|6001/i.test(err)) {
+      const fresh = await order(env, {
+        inputMint: row.input_mint,
+        outputMint: row.output_mint,
+        amount: row.in_raw,
+      }).catch(() => null);
+      throw new HttpError(422, "slippage", { suggestedSlippageBps: Number(fresh?.slippageBps ?? 0) || null });
+    }
+    throw new HttpError(422, `execute failed: ${err}`);
   }
   await swapsRepo.markSubmitted(sql, row.id, x.signature, signed, t);
   await settle(sql, { ...row, id: row.id }, Number(x.slot ?? 0), t, t);
