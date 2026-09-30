@@ -157,13 +157,15 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
     ...(q.slippageBps ? { slippageBps: String(q.slippageBps) } : {}),
     ...(referral ? { referralAccount: referral, referralFee: String(FEE_BPS) } : {}),
   };
-  // What Jupiter would allow on its own for this pair; a taker-less order is a quote, nothing is built.
+  // What Jupiter would allow on its own for this pair. It only sizes slippage for a real taker.
   const suggestedSlippageBps = q.slippageBps
     ? Number(
         (
-          await order(env, { inputMint, outputMint, amount: amount.toString() }).catch(() => ({
-            slippageBps: undefined,
-          }))
+          await order(env, { inputMint, outputMint, amount: amount.toString(), taker: q.taker }).catch(
+            () => ({
+              slippageBps: undefined,
+            }),
+          )
         ).slippageBps ?? 0,
       )
     : null;
@@ -419,6 +421,7 @@ export async function submit(
         inputMint: row.input_mint,
         outputMint: row.output_mint,
         amount: row.in_raw,
+        taker: row.wallet,
       }).catch(() => null);
       throw new HttpError(422, "slippage", { suggestedSlippageBps: Number(fresh?.slippageBps ?? 0) || null });
     }
