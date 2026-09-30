@@ -12,7 +12,7 @@ export type Env = {
   INVITE_GATE?: string; // "0" opens trading to everyone; default gated
   INVITES_PER_USER?: string; // personal invite code uses, default 5
   GAS_WALLET_SECRET?: string; // base58 keypair of our fee payer (secret)
-  BLOCKED_COUNTRIES?: string; // ISO codes that may not trade, default "US"
+  BLOCKED_COUNTRIES?: string; // ISO codes that may not trade, e.g. "US"; unset = open
   FEE_WALLET?: string; // pubkey that receives the 1% (USDC)
   JUP_API_KEY?: string;
   JUP_REFERRAL_ACCOUNT?: string; // Trigger (limit orders) referral account
