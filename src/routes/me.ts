@@ -101,7 +101,7 @@ me.post("/referrals/claim", async (c) =>
 
 me.get("/settings", (c) => c.json(shapeSettings(c.get("settings"))));
 const Settings = z.object({
-  slippageBps: z.number().int().min(10).max(500).optional(),
+  slippageBps: z.number().int().min(0).max(500).optional(), // 0 = auto (Jupiter sizes it per token)
   quickBuyUsd: z.array(z.number().int().min(1).max(100000)).min(1).max(4).optional(),
   quickSellPct: z.array(z.number().int().min(1).max(100)).min(1).max(4).optional(),
   priority: z.enum(["normal", "fast", "turbo"]).optional(),

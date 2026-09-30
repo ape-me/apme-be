@@ -33,7 +33,8 @@ export const Stock = z.object({
   logo: z.string().nullable(),
   priceUsd: z.number().nullable(),
   change24h: z.number().nullable(),
-  marketOpen: z.boolean(),
+  marketOpen: z.boolean(), // the US session for the underlying: context for the premium, not whether a Buy fills
+  tradable: z.boolean(), // whether a Buy or Sell can fill right now: pools trade 24/7, Ondo keeps hours
   halted: z.boolean(), // the issuer suspended trading in the underlying: no order can fill until it resumes
   decimals: z.number().int(),
   // Token-2022 scaled-UI multiplier: xStocks pay dividends / do splits by raising it. 1 raw unit = `multiplier` displayed

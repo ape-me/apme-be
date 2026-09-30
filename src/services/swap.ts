@@ -49,6 +49,7 @@ type Order = {
   inAmount: string;
   outAmount: string;
   outUsdValue?: number;
+  slippageBps?: number | string;
   rentFeeLamports?: number;
   rentFeePayer?: string;
   otherAmountThreshold: string;
@@ -245,7 +246,11 @@ export async function quote(
 ) {
   if (!wallets.some((w) => w.address === q.taker && w.chain === "solana"))
     throw new HttpError(403, "taker is not one of your wallets");
-  const b = await buildOrder(env, sql, { ...q, slippageBps: q.slippageBps ?? settings.slippage_bps });
+  // Slippage 0 in settings means auto: Jupiter sizes it per token (ultra mode), which fee-on-transfer names need.
+  const b = await buildOrder(env, sql, {
+    ...q,
+    slippageBps: q.slippageBps ?? (settings.slippage_bps || undefined),
+  });
   const { o, side, inputMint, outputMint, amount, feeRaw, inUsd, outUsd, stock } = b;
   const id = crypto.randomUUID();
   const t = now();
@@ -296,7 +301,7 @@ export async function quote(
     outUsd,
     totalUsd: inUsd,
     priceImpactPct,
-    slippageBps: q.slippageBps ?? settings.slippage_bps,
+    slippageBps: Number(o.slippageBps ?? q.slippageBps ?? 0),
     fee: {
       bps: feeRaw > 0n ? FEE_BPS : 0,
       amountRaw: feeRaw.toString(),
