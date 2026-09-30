@@ -6,7 +6,7 @@ import { tickerOf } from "./insights";
 import type { IngestNews } from "../contract";
 import type { z } from "zod";
 import { sha256hex } from "../lib/solana";
-import { FEEDS, outletFeed, xmlTag, UA } from "./feeds";
+import { FEEDS, outletFeed, xmlTag, text, UA } from "./feeds";
 
 const JUNK =
   /top .*pick|\$\d[\d,]* (investment|in )|stocks? to buy|here'?s (why|my|how)|should you|millionaire|prediction|best .*stocks?|\bvs\.?\b|forget |could (double|triple)|price target/i;
@@ -361,7 +361,7 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
     const hit = matcher(s);
     let fetched = 0;
     for (const n of raws.sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 12)) {
-      const title = n.title.trim();
+      const title = text(n.title);
       if (!title || seen.has(title) || !hit(title) || JUNK.test(title)) continue;
       seen.add(title);
       if (++fetched > 6) break;
@@ -380,7 +380,7 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
       const [row] = await newsRepo.upsert(sql, {
         id,
         title,
-        summary: n.summary,
+        summary: n.summary && text(n.summary),
         source: outlet(url, n.source),
         url,
         image: articleImage(n.image) ?? (await ogImage(url)),

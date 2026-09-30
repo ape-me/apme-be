@@ -40,7 +40,7 @@ export const xmlTag = (s: string, t: string) =>
   (s.match(new RegExp(`<${t}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${t}>`))?.[1] ?? "").trim();
 const attr = (s: string, tag: string, a: string) =>
   s.match(new RegExp(`<${tag}[^>]*\\b${a}=["']([^"']+)["']`))?.[1] ?? null;
-const text = (s: string) =>
+export const text = (s: string) =>
   s
     .replace(/<!\[CDATA\[|\]\]>/g, "")
     .replace(/<[^>]+>/g, " ")
