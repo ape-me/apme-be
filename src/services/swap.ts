@@ -18,6 +18,7 @@ import {
   u8,
 } from "../lib/solana";
 import { swapsRepo } from "../repos/swaps";
+import { tradable } from "./shape";
 import type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 
 // USDC-only trading on Jupiter's Swap API v2 `/order`: one call quotes and assembles the transaction, Jupiter picks
@@ -140,6 +141,7 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
   if (!stock) throw notFound("token");
   // The issuer suspended trading in the underlying: a fill would have nothing to settle against.
   if (stock.halted) throw new HttpError(409, `trading in ${stock.symbol} is halted by the issuer`);
+  if (!tradable(stock)) throw new HttpError(409, "market_closed", { opensAt: "Sunday 8pm ET" });
   const [{ feeBps: issuerFeeBps }, takerLamports, referral] = await Promise.all([
     mintInfo(conn, new PublicKey(tokenMint)),
     conn.getBalance(taker, "confirmed"),

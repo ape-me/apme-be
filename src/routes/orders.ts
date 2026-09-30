@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import { withDb } from "../middleware/db";
-import { requireAuth, requireActive, type AuthVars } from "../middleware/auth";
+import { requireAuth, requireActive, requireRegion, type AuthVars } from "../middleware/auth";
 import { parse } from "../lib/validate";
 import { Mint } from "../contract";
 import { quoteOrder, submitOrder, cancelOrder, submitCancel, listOrders } from "../services/orders";
@@ -17,7 +17,7 @@ const QuoteBody = z.object({
 const Signed = z.object({ signedTransaction: z.string().min(100) });
 
 export const orders = new Hono<{ Bindings: Env; Variables: AuthVars }>();
-orders.use("*", withDb, requireAuth, requireActive);
+orders.use("*", withDb, requireRegion, requireAuth, requireActive);
 
 orders.get("/", async (c) =>
   c.json(

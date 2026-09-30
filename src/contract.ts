@@ -50,7 +50,7 @@ export const Stock = z.object({
   sells24h: z.number().int().nullable(),
   tags: z.array(z.string()), // collection ids it belongs to (["ai","mag7"]) plus its group for crypto/earn (majors|l1|defi|memes|solana|earn)
 });
-export const Issuer = z.enum(["xstocks", "backpack", "prestocks"]);
+export const Issuer = z.enum(["xstocks", "backpack", "prestocks", "ondo"]);
 
 // Stock price line for the Invest-mode chart. One point per bucket, oldest → newest; `mark` is the fair value if known.
 export const HistoryRange = z.enum(["5m", "15m", "1h", "1d", "1w", "1m"]);

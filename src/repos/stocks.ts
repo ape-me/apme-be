@@ -36,9 +36,10 @@ export type Category = (typeof Category)[number];
 const COLS = (sql: Sql) => sql`
   s.mint, s.symbol, s.name, s.issuer, s.category, s.decimals, s.logo, s.price_usd, s.change_24h, s.multiplier, s.tags,
   s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h, s.halted, s.underlying`;
-// Only what can be traded reaches a card: priced, pooled, not excluded.
+// Only what can be traded reaches a card: priced, pooled, not excluded. Ondo fills through Jupiter's RFQ, so
+// its pool depth says nothing about whether it trades.
 const live = (sql: Sql) =>
-  sql`NOT s.excluded AND s.price_usd IS NOT NULL AND coalesce(s.liquidity_usd, 0) >= ${MIN_LIQUIDITY_USD}`;
+  sql`NOT s.excluded AND s.price_usd IS NOT NULL AND (coalesce(s.liquidity_usd, 0) >= ${MIN_LIQUIDITY_USD} OR s.issuer = 'ondo')`;
 const order = (sql: Sql) =>
   sql`ORDER BY coalesce(s.vol_24h_usd, 0) DESC, coalesce(s.liquidity_usd, 0) DESC, s.symbol`;
 // Specific mints, e.g. a holding or an order: whichever issuer's token it is.

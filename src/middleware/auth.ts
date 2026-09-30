@@ -54,3 +54,11 @@ export const requireAdmin: MiddlewareHandler<{ Bindings: Env }> = async (c, next
   if (!c.env.ADMIN_TOKEN || t !== c.env.ADMIN_TOKEN) throw unauthorized();
   await next();
 };
+
+// The issuers' terms bar some countries from buying; Cloudflare stamps the caller's country on every request.
+export const requireRegion: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const country = c.req.header("cf-ipcountry")?.toUpperCase() ?? "";
+  const blocked = (c.env.BLOCKED_COUNTRIES ?? "US").split(",").map((x) => x.trim().toUpperCase());
+  if (country && blocked.includes(country)) throw new HttpError(451, "region_blocked", { country });
+  await next();
+};

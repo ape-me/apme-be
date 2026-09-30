@@ -140,9 +140,10 @@ export const swapsRepo = {
       multiplier: number;
       issuer: string;
       halted: boolean;
+      tags: string[] | string;
     }[]
   >`
-    SELECT symbol, decimals, premium_pct, mark_usd, price_usd, multiplier, issuer, halted FROM stocks WHERE mint = ${mint}`,
+    SELECT symbol, decimals, premium_pct, mark_usd, price_usd, multiplier, issuer, halted, tags FROM stocks WHERE mint = ${mint}`,
   tokenMeta: (sql: Sql, mint: string) =>
     sql<
       { symbol: string | null; decimals: number }[]

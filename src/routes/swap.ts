@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
 import { withDb } from "../middleware/db";
-import { requireAuth, requireActive, type AuthVars } from "../middleware/auth";
+import { requireAuth, requireActive, requireRegion, type AuthVars } from "../middleware/auth";
 import { parse } from "../lib/validate";
 import { Mint } from "../contract";
 import { quote, submit, txStatus } from "../services/swap";
@@ -17,7 +17,7 @@ const QuoteBody = z.object({
 });
 
 export const swap = new Hono<{ Bindings: Env; Variables: AuthVars }>();
-swap.use("*", withDb, requireAuth, requireActive);
+swap.use("*", withDb, requireRegion, requireAuth, requireActive);
 
 swap.post("/quote", async (c) => {
   const b = parse(QuoteBody, await c.req.json());
