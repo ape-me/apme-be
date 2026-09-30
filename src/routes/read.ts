@@ -117,6 +117,7 @@ read.get("/news", (c) =>
   cached(c.req.raw, 60, async () => {
     const q = parse(
       z.object({
+        scope: z.enum(["stocks", "market"]).default("stocks"),
         mints: z.string().optional(),
         limit: Limit.default(30),
         before: Ts.optional(),
@@ -127,12 +128,22 @@ read.get("/news", (c) =>
       c.req.query(),
     );
     const mints = (q.mints ?? "").split(",").filter((m) => Mint.safeParse(m).success);
+    const minImpact = IMPACT_LEVEL[q.minImpact ?? "minor"] ?? 1;
+    if (q.scope === "market")
+      return c.json({
+        items: await news.market(c.get("sql"), {
+          limit: q.limit,
+          before: q.before ?? null,
+          minImpact,
+          withImage: q.withImage === "1",
+        }),
+      });
     return c.json({
       items: await news.feed(c.get("sql"), {
         mints,
         limit: q.limit,
         before: q.before ?? null,
-        minImpact: IMPACT_LEVEL[q.minImpact ?? "minor"] ?? 1,
+        minImpact,
         perStock: q.perStock,
         withImage: q.withImage === "1",
       }),

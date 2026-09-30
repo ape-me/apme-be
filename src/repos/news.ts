@@ -2,9 +2,9 @@ import type { Sql } from "../lib/db";
 
 export type NewsRow = {
   id: string;
-  mint: string;
-  symbol: string;
-  name: string;
+  mint: string | null;
+  symbol: string | null;
+  name: string | null;
   logo: string | null;
   price_usd: number | null;
   change_24h: number | null;
@@ -17,11 +17,12 @@ export type NewsRow = {
   impact: number | null;
   direction: string | null;
   confidence: number | null;
+  scope: string;
 };
 
 const SELECT = (sql: Sql) => sql`
   SELECT n.id, ns.mint, s.symbol, s.name, s.logo, s.price_usd, s.change_24h, n.title, n.summary, n.source, n.url, n.image,
-         n.published_at, n.impact, n.direction, n.confidence
+         n.published_at, n.impact, n.direction, n.confidence, n.scope
   FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
   WHERE NOT n.junk AND NOT s.excluded`;
 
@@ -36,14 +37,15 @@ export const newsRepo = {
       url: string;
       image: string | null;
       titleKey: string;
+      scope: "stock" | "market";
       publishedAt: number;
       t: number;
     },
   ) =>
     sql<
       { id: string; inserted: boolean }[]
-    >`INSERT INTO news (id, title, summary, source, url, image, title_key, published_at, fetched_at)
-      VALUES (${n.id}, ${n.title}, ${n.summary}, ${n.source}, ${n.url}, ${n.image}, ${n.titleKey}, ${n.publishedAt}, ${n.t})
+    >`INSERT INTO news (id, title, summary, source, url, image, title_key, scope, published_at, fetched_at)
+      VALUES (${n.id}, ${n.title}, ${n.summary}, ${n.source}, ${n.url}, ${n.image}, ${n.titleKey}, ${n.scope}, ${n.publishedAt}, ${n.t})
       ON CONFLICT (url) DO UPDATE SET title = EXCLUDED.title, image = COALESCE(news.image, EXCLUDED.image)
       RETURNING id, (xmax = 0) AS inserted`,
   // The same story from a second outlet is the same story: reuse the row we already have.
@@ -55,6 +57,10 @@ export const newsRepo = {
       { id: string; title: string }[]
     >`SELECT n.id, n.title FROM news n JOIN news_stocks ns ON ns.news_id = n.id
       WHERE ns.mint = ${mint} AND n.published_at > ${since}`,
+  recentMarketTitles: (sql: Sql, since: number) =>
+    sql<
+      { id: string; title: string }[]
+    >`SELECT id, title FROM news WHERE scope = 'market' AND published_at > ${since}`,
   setImage: (sql: Sql, id: string, image: string) =>
     sql`UPDATE news SET image = ${image} WHERE id = ${id} AND image IS NULL`,
   tag: (sql: Sql, newsId: string, mint: string, relevance: number) =>
@@ -65,10 +71,25 @@ export const newsRepo = {
     s: { impact: number | null; direction: string | null; confidence: number | null; junk: boolean },
   ) =>
     sql`UPDATE news SET impact = ${s.impact}, direction = ${s.direction}, confidence = ${s.confidence}, junk = ${s.junk} WHERE id = ${id}`,
+  // Market rows have no stock; they are scored against the market itself.
   unscored: (sql: Sql, limit: number) =>
-    sql<{ id: string; title: string; summary: string | null; name: string; symbol: string; mint: string }[]>`
-      SELECT n.id, n.title, n.summary, s.name, s.symbol, ns.mint FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
-      WHERE n.impact IS NULL AND NOT n.junk ORDER BY n.published_at DESC LIMIT ${limit}`,
+    sql<{ id: string; title: string; summary: string | null; name: string | null; symbol: string | null }[]>`
+      SELECT id, title, summary, name, symbol FROM (
+        SELECT DISTINCT ON (n.id) n.id, n.title, n.summary, s.name, s.symbol, n.published_at
+        FROM news n LEFT JOIN news_stocks ns ON ns.news_id = n.id LEFT JOIN stocks s ON s.mint = ns.mint
+        WHERE n.impact IS NULL AND NOT n.junk AND (n.scope = 'market' OR s.mint IS NOT NULL)
+        ORDER BY n.id, ns.relevance DESC NULLS LAST, s.symbol) x
+      ORDER BY published_at DESC LIMIT ${limit}`,
+  market: (sql: Sql, a: { limit: number; before: number | null; minImpact: number; withImage: boolean }) =>
+    sql<NewsRow[]>`
+      SELECT n.id, NULL AS mint, NULL AS symbol, NULL AS name, NULL AS logo, NULL AS price_usd, NULL AS change_24h,
+             n.title, n.summary, n.source, n.url, n.image, n.published_at, n.impact, n.direction, n.confidence, n.scope
+      FROM news n
+      WHERE n.scope = 'market' AND NOT n.junk AND n.impact IS NOT NULL AND n.impact >= ${a.minImpact}
+        AND n.published_at > ${Math.floor(Date.now() / 1000) - 7 * 86400}
+        ${a.before ? sql`AND n.published_at < ${a.before}` : sql``}
+        ${a.withImage ? sql`AND n.image IS NOT NULL` : sql``}
+      ORDER BY n.published_at DESC LIMIT ${a.limit}`,
   byMint: (sql: Sql, mint: string, limit: number, before: number | null, withImage: boolean) =>
     sql<
       NewsRow[]

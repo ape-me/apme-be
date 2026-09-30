@@ -6,8 +6,8 @@ import { tickerOf } from "./insights";
 import type { IngestNews } from "../contract";
 import type { z } from "zod";
 import { sha256hex } from "../lib/solana";
+import { FEEDS, outletFeed, xmlTag, UA } from "./feeds";
 
-const UA = "Mozilla/5.0 (compatible; Stonks247/1.0)";
 const JUNK =
   /top .*pick|\$\d[\d,]* (investment|in )|stocks? to buy|here'?s (why|my|how)|should you|millionaire|prediction|best .*stocks?|\bvs\.?\b|forget |could (double|triple)|price target/i;
 const TIER1 = [
@@ -29,17 +29,20 @@ const TIER1 = [
 const IMPACT = ["none", "minor", "material", "major", "critical"] as const;
 export const IMPACT_LEVEL: Record<string, number> = { none: 0, minor: 1, material: 2, major: 3, critical: 4 };
 const ymd = (x: Date) => x.toISOString().slice(0, 10);
-const xmlTag = (s: string, t: string) =>
-  (s.match(new RegExp(`<${t}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${t}>`))?.[1] ?? "").trim();
+// Headlines with no company in them that still move every stock: rates, inflation, tariffs, the index itself.
+const MACRO =
+  /\b(fed|federal reserve|powell|fomc|rate (cut|hike|decision)|interest rates?|inflation|cpi|pce|payrolls|jobs report|unemployment|tariffs?|trade (war|deal|talks)|nasdaq|s&p ?500|dow( jones)?|wall street|stock market|stocks (rise|fall|slide|rally|drop|tumble|climb|surge|sink|gain|slip)|treasur(y|ies)|bond yields?|recession|gdp|earnings season|shutdown|debt ceiling|sec\b|opec|oil prices?)\b/i;
 
 // Match the company name case-insensitively, the ticker only in caps: lowercase "ups" is a word, "UPS" is a company.
 const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const mentions = (s: { name: string; symbol: string; issuer: string }, title: string) => {
+type Stock = { mint: string; symbol: string; name: string; issuer: string };
+const matcher = (s: Stock) => {
   const first = s.name.split(/[\s,.]+/)[0]!;
   const names = [s.name, first].filter((x) => x.length > 3);
-  if (names.length && new RegExp(`\\b(${names.map(esc).join("|")})\\b`, "i").test(title)) return true;
+  const byName = names.length ? new RegExp(`\\b(${names.map(esc).join("|")})\\b`, "i") : null;
   const t = tickerOf(s);
-  return !!t && t.length > 1 && new RegExp(`\\b${esc(t)}\\b`).test(title);
+  const byTicker = t && t.length > 1 ? new RegExp(`\\b${esc(t)}\\b`) : null;
+  return (title: string) => !!(byName?.test(title) || byTicker?.test(title));
 };
 
 type Raw = {
@@ -201,16 +204,21 @@ const outlet = (url: string, source: string | null) => {
 };
 
 // Four typed questions per article, no text generation.
-const jevInput = (a: { title: string; summary: string | null; name: string; symbol: string }) => ({
-  state: `Stock: ${a.name} (${a.symbol}). Headline: ${a.title}. Summary: ${a.summary ?? ""}`,
+type Scorable = { title: string; summary: string | null; name: string | null; symbol: string | null };
+const jevInput = (a: Scorable) => ({
+  state: `${a.name ? `Stock: ${a.name} (${a.symbol}).` : "Subject: the US stock market as a whole."} Headline: ${a.title}. Summary: ${a.summary ?? ""}`,
   questions: {
     about: {
       type: "noul",
-      instructions: "Is this article primarily about the named company rather than mentioning it in passing?",
+      instructions: a.name
+        ? "Is this article primarily about the named company rather than mentioning it in passing?"
+        : "Is this article about something that moves US stocks broadly: rates, inflation, tariffs, jobs, the indexes?",
     },
     impact: {
       type: "score",
-      instructions: "How much could this news move the stock price over the next few days?",
+      instructions: a.name
+        ? "How much could this news move the stock price over the next few days?"
+        : "How much could this news move the US stock market over the next few days?",
       criteria: [
         "No effect: filler, listicle, opinion",
         "Minor: routine coverage",
@@ -239,7 +247,7 @@ const jevInput = (a: { title: string; summary: string | null; name: string; symb
 // Workers AI binding inside the Worker, the same model over REST from the box. Null means "not scored", never a guess.
 type JevAnswers = Record<string, { noul?: number; score?: number; choice?: string; confidence?: number }>;
 type JevOut = { answers?: JevAnswers; result?: { answers?: JevAnswers } };
-async function score(env: Env, a: { title: string; summary: string | null; name: string; symbol: string }) {
+async function score(env: Env, a: Scorable) {
   let out: JevOut | null = null;
   if (env.AI) {
     out = (await env.AI.run("typesafe/jev", jevInput(a), { gateway: { id: "default" } })) as JevOut;
@@ -341,16 +349,20 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
   const t = Math.floor(Date.now() / 1000);
   const fresh: z.infer<typeof IngestNews>[] = [];
   let added = 0;
+  const feeds = await ingestFeeds(sql, stocks, t);
+  fresh.push(...feeds.fresh);
+  added += feeds.added;
   for (const s of slice) {
     const ticker = tickerOf(s);
     let raws = ticker && env.FINNHUB_KEY ? await finnhub(env, ticker) : [];
     if (!raws.length) raws = await google(s.name);
     const seen = new Set<string>();
     const recent = await newsRepo.recentTitles(sql, s.mint, t - 2 * 86400);
+    const hit = matcher(s);
     let fetched = 0;
     for (const n of raws.sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 12)) {
       const title = n.title.trim();
-      if (!title || seen.has(title) || !mentions(s, title) || JUNK.test(title)) continue;
+      if (!title || seen.has(title) || !hit(title) || JUNK.test(title)) continue;
       seen.add(title);
       if (++fetched > 6) break;
       const url = await resolve(n.url);
@@ -373,6 +385,7 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
         url,
         image: articleImage(n.image) ?? (await ogImage(url)),
         titleKey: key,
+        scope: "stock",
         publishedAt: n.publishedAt,
         t,
       });
@@ -394,7 +407,79 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
   const { scored } = await scoreNews(env, sql, 40);
   if (minute % 60 === 0) await newsRepo.prune(sql, t - 7 * 86400);
   if (fresh.length) await pushNews(env, fresh);
-  return { stocks: slice.length, added, scored };
+  return { stocks: slice.length, feeds: feeds.seen, market: feeds.market, added, scored };
+}
+
+// Outlet feeds: every headline is matched against the whole catalog; the ones about no company but about the
+// market itself are kept under scope "market". At most `MAX_NEW` article pages are opened per run for a picture.
+const MAX_NEW = 40;
+async function ingestFeeds(sql: Sql, stocks: Stock[], t: number) {
+  const hits = stocks.map((s) => ({ s, hit: matcher(s) }));
+  const feeds = await Promise.all(FEEDS.map((f) => outletFeed(f).catch(() => [])));
+  const items = feeds
+    .flat()
+    .filter((n) => n.publishedAt > t - 2 * 86400 && !JUNK.test(n.title))
+    .sort((a, b) => b.publishedAt - a.publishedAt);
+  const marketRecent = await newsRepo.recentMarketTitles(sql, t - 2 * 86400);
+  const seen = new Set<string>();
+  const fresh: z.infer<typeof IngestNews>[] = [];
+  let added = 0,
+    market = 0,
+    opened = 0;
+  for (const n of items) {
+    const key = titleKey(n.title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const about = hits.filter((h) => h.hit(n.title)).slice(0, 3);
+    const scope = about.length ? "stock" : MACRO.test(n.title) ? "market" : null;
+    if (!scope) continue;
+    const [exact] = await newsRepo.byTitleKey(sql, key, t - 7 * 86400);
+    const w = words(n.title);
+    const near =
+      exact ??
+      (scope === "market"
+        ? marketRecent.find((r) => sameStory(w, words(r.title)))
+        : (await newsRepo.recentTitles(sql, about[0]!.s.mint, t - 2 * 86400)).find((r) =>
+            sameStory(w, words(r.title)),
+          ));
+    if (near) {
+      for (const h of about) await newsRepo.tag(sql, near.id, h.s.mint, 1);
+      continue;
+    }
+    const id = (await sha256hex(new TextEncoder().encode(n.url))).slice(0, 32);
+    const image = articleImage(n.image) ?? (opened++ < MAX_NEW ? await ogImage(n.url) : null);
+    const [row] = await newsRepo.upsert(sql, {
+      id,
+      title: n.title,
+      summary: n.summary,
+      source: n.source,
+      url: n.url,
+      image,
+      titleKey: key,
+      scope,
+      publishedAt: n.publishedAt,
+      t,
+    });
+    if (!row) continue;
+    for (const h of about) await newsRepo.tag(sql, row.id, h.s.mint, 1);
+    if (!row.inserted) continue;
+    if (scope === "market") {
+      market++;
+      marketRecent.push({ id: row.id, title: n.title });
+      continue;
+    }
+    added++;
+    for (const h of about)
+      fresh.push({
+        mint: h.s.mint,
+        symbol: h.s.symbol,
+        title: n.title,
+        source: n.source,
+        url: n.url,
+        publishedAt: n.publishedAt,
+      });
+  }
+  return { seen: items.length, added, market, fresh };
 }
 
 export const shapeNews = (r: NewsRow) => ({
@@ -415,6 +500,7 @@ export const shapeNews = (r: NewsRow) => ({
   direction: r.direction,
   confidence: r.confidence,
   tier1: !!r.source && TIER1.some((x) => r.source!.toLowerCase().includes(x)),
+  scope: r.scope,
 });
 
 export const news = {
@@ -431,4 +517,8 @@ export const news = {
       withImage: boolean;
     },
   ) => (await newsRepo.feed(sql, a)).map(shapeNews),
+  market: async (
+    sql: Sql,
+    a: { limit: number; before: number | null; minImpact: number; withImage: boolean },
+  ) => (await newsRepo.market(sql, a)).map(shapeNews),
 };
