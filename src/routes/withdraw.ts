@@ -5,7 +5,7 @@ import { withDb } from "../middleware/db";
 import { requireAuth, requireActive, requireRegion, type AuthVars } from "../middleware/auth";
 import { parse } from "../lib/validate";
 import { Mint } from "../contract";
-import { quote, submit, status, reclaim } from "../services/withdraw";
+import { quote, submit, status } from "../services/withdraw";
 
 const QuoteBody = z.object({
   from: Mint,
@@ -20,12 +20,6 @@ withdraw.use("*", withDb, requireRegion, requireAuth, requireActive);
 withdraw.post("/quote", async (c) => {
   const b = parse(QuoteBody, await c.req.json());
   return c.json(await quote(c.env, c.get("sql"), c.get("user"), c.get("wallets"), b));
-});
-
-// Closes the wallet's empty token accounts; sign and send through /submit like any withdrawal.
-withdraw.post("/reclaim", async (c) => {
-  const b = parse(z.object({ from: Mint }), await c.req.json());
-  return c.json(await reclaim(c.env, c.get("sql"), c.get("user"), c.get("wallets"), b.from));
 });
 
 withdraw.post("/submit", async (c) => {

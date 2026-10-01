@@ -8,24 +8,23 @@ import {
   sha256hex,
   connection,
   ata,
-  gasPays,
   buildV0,
   lookupTables,
-  createAtaIdempotent,
-  transferChecked,
-  ATA_RENT_LAMPORTS,
   ATA_PROGRAM,
-  TOKEN_PROGRAM,
-  TOKEN_2022_PROGRAM,
 } from "../lib/solana";
 import { ordersRepo, type OrderRow } from "../repos/orders";
 import { swapsRepo } from "../repos/swaps";
-import { solPrice as solUsd } from "../lib/rpc";
 import { configNum } from "./config";
 import { accountRepo } from "../repos/account";
 import { jupBase, jupHeaders, signedByUser } from "./swap";
+import { sweep, swept, owe, orderRent } from "./sweep";
 import type { UserRow, WalletRow } from "../repos/account";
-import { PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import {
+  PublicKey,
+  TransactionMessage,
+  VersionedTransaction,
+  type TransactionInstruction,
+} from "@solana/web3.js";
 
 // Limit orders live in Jupiter's Trigger program: they hold the escrow and their keepers fill it. We build,
 // take the signature, and keep our own row so the order has a user, a symbol and a cost basis.
@@ -37,8 +36,6 @@ const MAX_OPEN = 20;
 const MIN_ORDER_USD = 5;
 const MIN_GAP_BPS = 0;
 // Jupiter's order account (372 bytes) plus its escrow. Measured on chain; the refund goes to the maker on
-// fill, never to whoever paid it, so it is a real cost to us unless the order carries it.
-const ORDER_RENT_LAMPORTS = 4_030_000;
 // A deadline only ever costs the user: Jupiter keeps the escrow past it, so a lapsed order is money that
 // needs a cancel to come home. Brokers still cap a resting order so a forgotten one cannot fill on a price
 // its owner stopped wanting. Live value is `orders.ttl_days`; 0 lets an order rest until it is cancelled.
@@ -120,17 +117,6 @@ async function requireUsdc(env: Env, wallet: string, needed: number) {
     });
 }
 
-// A first buy of a stonk has to open the maker's token account. Jupiter bills that to the maker, who holds no
-// SOL, so the gas wallet pays it on chain and the escrow carries it back to us.
-async function ataRent(env: Env, wallet: string, mint: string) {
-  const [owner, m] = [new PublicKey(wallet), new PublicKey(mint)];
-  const infos = await connection(env).getMultipleAccountsInfo([
-    ata(owner, m),
-    ata(owner, m, TOKEN_2022_PROGRAM),
-  ]);
-  return infos.some((i) => i) ? 0 : ATA_RENT_LAMPORTS;
-}
-
 const ownWallet = (wallets: WalletRow[], address: string) => {
   if (!wallets.some((w) => w.address === address && w.chain === "solana"))
     throw new HttpError(403, "wallet is not one of yours");
@@ -155,15 +141,11 @@ export async function orderConfig(sql: Sql) {
   };
 }
 
-// Jupiter bills the maker for gas and for the token account it opens, and our makers hold no SOL. We rebuild
-// its transaction with the gas wallet paying both, and add one USDC transfer that settles what we fronted.
-async function withCharge(
-  env: Env & { FEE_WALLET: string },
-  built: string,
-  gas: PublicKey,
-  maker: PublicKey,
-  chargeRaw: bigint,
-) {
+// Jupiter builds every order transaction with the maker as fee payer, and our makers hold no SOL. We rebuild it
+// with the gas wallet paying gas and any token account it opens, and append the sweep that keeps the maker's SOL
+// at zero. `after` runs once Jupiter's own instructions have run, so SOL they hand the maker can leave in the same
+// transaction.
+async function rebuild(env: Env, built: string, gas: PublicKey, after: TransactionInstruction[]) {
   const conn = connection(env);
   const jup = VersionedTransaction.deserialize(Buffer.from(built, "base64"));
   const alts = await lookupTables(
@@ -173,15 +155,7 @@ async function withCharge(
   const ixs = TransactionMessage.decompile(jup.message, { addressLookupTableAccounts: alts }).instructions;
   for (const ix of ixs)
     if (ix.programId.equals(ATA_PROGRAM)) ix.keys[0] = { pubkey: gas, isSigner: true, isWritable: true };
-  const usdc = new PublicKey(USDC_MINT);
-  const fee = new PublicKey(env.FEE_WALLET);
-  const charge = chargeRaw
-    ? [
-        createAtaIdempotent(gas, fee, usdc, TOKEN_PROGRAM),
-        transferChecked(ata(maker, usdc), usdc, ata(fee, usdc), maker, chargeRaw, 6, TOKEN_PROGRAM),
-      ]
-    : [];
-  const { tx } = await buildV0(conn, gas, [...charge, ...ixs], alts);
+  const { tx } = await buildV0(conn, gas, [...ixs, ...after], alts);
   return tx;
 }
 
@@ -239,22 +213,7 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     : Math.round((orderUsd - feeUsd) * 1e6);
   if (taking <= 0) throw badRequest("trigger price is too far from the amount");
 
-  // Jupiter takes its cut out of the mint the order pays OUT, and the referral program cannot hold a
-  // Token-2022 stonk: only a sell, which pays out USDC, can carry a fee. A buy is free and we eat its rent.
-  const [sol, ataLamports] = await Promise.all([
-    solUsd(),
-    q.side === "buy" ? ataRent(env, q.wallet, q.mint) : 0,
-  ]);
-
-  // We front every lamport this order costs, and Jupiter refunds the deposit to the maker, not to us. So the
-  // maker pays it here in USDC and gets it back in SOL when the order closes: square on both sides.
-  const sameMint = ataLamports ? await ordersRepo.openForMint(sql, user.id, q.mint) : [];
-  // Priced apart so the ticket can show them apart, and summed so the two rows always equal the total.
-  const rentRaw = (l: number) => (buy && sol ? Math.ceil((l / 1e9) * sol * 1e6) : 0);
-  const depositRaw = rentRaw(ORDER_RENT_LAMPORTS);
-  const accountRaw = sameMint.length ? 0 : rentRaw(ataLamports);
-  const chargeRaw = BigInt(depositRaw + accountRaw);
-  if (buy) await requireUsdc(env, q.wallet, making + depositRaw + accountRaw);
+  if (buy) await requireUsdc(env, q.wallet, making);
 
   const gas = gasKeypair(env).publicKey;
   const built = await trigger<{ order: string; requestId: string; transaction: string }>(env, "createOrder", {
@@ -272,14 +231,8 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     computeUnitPrice: "auto",
   });
 
-  const tx = await withCharge(
-    env as Env & { FEE_WALLET: string },
-    built.transaction,
-    gas,
-    new PublicKey(q.wallet),
-    chargeRaw,
-  );
-  const rentUsd = Number(chargeRaw) / 1e6;
+  const sw = await sweep(env, sql, new PublicKey(q.wallet));
+  const tx = await rebuild(env, built.transaction, gas, sw.ixs);
   const t = Math.floor(Date.now() / 1000);
   await ordersRepo.insert(sql, {
     id: built.order,
@@ -294,12 +247,13 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     taking_raw: String(taking),
     making_usd: orderUsd,
     trigger_usd: q.triggerUsd,
-    rent_usd: rentUsd,
+    rent_usd: 0,
     expires_at: expiresAt,
     request_id: built.requestId,
     msg_hash: await sha256hex(tx.message.serialize()),
     t,
   });
+  await ordersRepo.setSweep(sql, built.order, sw.lamports);
   return {
     id: built.order,
     transaction: Buffer.from(tx.serialize()).toString("base64"),
@@ -312,10 +266,8 @@ export async function quoteOrder(env: Env, sql: Sql, user: UserRow, wallets: Wal
     escrowUsd: q.side === "buy" ? making / 1e6 : null,
     triggerUsd: q.triggerUsd,
     expiresAt,
-    costUsd: rentUsd,
-    depositUsd: depositRaw / 1e6,
-    accountUsd: accountRaw / 1e6,
-    totalUsd: making / 1e6 + rentUsd,
+    costUsd: 0,
+    totalUsd: making / 1e6,
     fee: {
       bps: feeBps,
       usd: feeUsd,
@@ -348,6 +300,7 @@ export async function submitOrder(env: Env, sql: Sql, user: UserRow, id: string,
   try {
     const signature = await send(env, signedTransaction, row);
     await ordersRepo.markOpen(sql, row.id, signature, t);
+    await swept(sql, row.wallet, BigInt(row.sweep_lamports));
     return { id: row.id, status: "open" as const, signature };
   } catch (e) {
     if (e instanceof HttpError) throw e;
@@ -383,15 +336,15 @@ export async function cancelOrder(env: Env, sql: Sql, user: UserRow, id: string)
     order: row.id,
     computeUnitPrice: "auto",
   });
-  const tx = gasPays(
-    VersionedTransaction.deserialize(Buffer.from(built.transaction, "base64")),
-    gasKeypair(env).publicKey,
-  );
+  const refund = BigInt(row.rent_lamports ?? 0) || (await orderRent(env, row.id));
+  const sw = await sweep(env, sql, new PublicKey(row.wallet), refund);
+  const tx = await rebuild(env, built.transaction, gasKeypair(env).publicKey, sw.ixs);
   await ordersRepo.setPending(
     sql,
     row.id,
     built.requestId,
     await sha256hex(tx.message.serialize()),
+    sw.lamports,
     Math.floor(Date.now() / 1000),
   );
   return { id: row.id, transaction: Buffer.from(tx.serialize()).toString("base64") };
@@ -403,6 +356,7 @@ export async function submitCancel(env: Env, sql: Sql, user: UserRow, id: string
   if (row.status !== "open" && row.status !== "expired") throw new HttpError(409, `order is ${row.status}`);
   const signature = await send(env, signedTransaction, row);
   await ordersRepo.markCancelled(sql, row.id, signature, Math.floor(Date.now() / 1000));
+  await swept(sql, row.wallet, BigInt(row.sweep_lamports));
   return { id: row.id, status: "cancelled" as const, signature };
 }
 
@@ -435,6 +389,7 @@ export async function reconcile(env: Env, sql: Sql, open: OrderRow[], wallets?: 
       if (!hit) return;
       // Jupiter keeps an expired order in its active list and keeps the funds: it needs a cancel to release.
       if (hit.status === "active") {
+        if (row.rent_lamports == null) await ordersRepo.setRent(sql, row.id, await orderRent(env, row.id));
         if (row.expires_at && t > Number(row.expires_at) && row.status === "open") {
           await ordersRepo.markExpired(sql, row.id, t);
           settled.push({ row, status: "expired", fillUsd: null });
@@ -450,6 +405,8 @@ export async function reconcile(env: Env, sql: Sql, open: OrderRow[], wallets?: 
       const fillUsd = filled ? Math.round(Number(row.making_usd ?? 0) * part * 1e6) / 1e6 : null;
       const feeUsd = fillUsd == null || row.side === "buy" ? 0 : (fillUsd * FEE_BPS) / 10_000;
       await ordersRepo.settle(sql, row.id, status, fillUsd, filled ? feeUsd : null, t);
+      // Closed by Jupiter's keeper or elsewhere: the rent went to the maker and comes back on their next sweep.
+      if (row.status !== "cancelled") await owe(sql, row.wallet, BigInt(row.rent_lamports ?? 0));
       if (filled) {
         const scale = (raw: string) => String(BigInt(Math.round(Number(raw) * part)));
         await swapsRepo.insertFill(sql, {

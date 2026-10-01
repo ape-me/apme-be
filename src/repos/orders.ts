@@ -15,6 +15,8 @@ export type OrderRow = {
   trigger_usd: number | null;
   status: "quoted" | "open" | "expired" | "filled" | "cancelled" | "failed";
   rent_usd: number | null;
+  rent_lamports: string | null;
+  sweep_lamports: string;
   request_id: string | null;
   msg_hash: string | null;
   signature: string | null;
@@ -79,8 +81,12 @@ export const ordersRepo = {
   openFor: (sql: Sql, userId: string) =>
     sql<OrderRow[]>`SELECT * FROM orders WHERE user_id = ${userId} AND status IN ('open', 'expired')`,
   // A cancel is a second transaction to sign, so the row carries its request and hash while it is in flight.
-  setPending: (sql: Sql, id: string, requestId: string, msgHash: string, t: number) =>
-    sql`UPDATE orders SET request_id = ${requestId}, msg_hash = ${msgHash}, updated_at = ${t} WHERE id = ${id}`,
+  setPending: (sql: Sql, id: string, requestId: string, msgHash: string, sweep: bigint, t: number) =>
+    sql`UPDATE orders SET request_id = ${requestId}, msg_hash = ${msgHash}, sweep_lamports = ${sweep.toString()}, updated_at = ${t} WHERE id = ${id}`,
+  setSweep: (sql: Sql, id: string, sweep: bigint) =>
+    sql`UPDATE orders SET sweep_lamports = ${sweep.toString()} WHERE id = ${id}`,
+  setRent: (sql: Sql, id: string, lamports: bigint) =>
+    sql`UPDATE orders SET rent_lamports = ${lamports.toString()} WHERE id = ${id} AND rent_lamports IS NULL`,
   markOpen: (sql: Sql, id: string, signature: string, t: number) =>
     sql`UPDATE orders SET status = 'open', signature = ${signature}, updated_at = ${t} WHERE id = ${id}`,
   // Jupiter leaves an expired order holding the maker's funds, so it is its own state: done working, not done.

@@ -11,6 +11,7 @@ export type WithdrawalRow = {
   decimals: number;
   usd: number | null;
   rent_lamports: string;
+  sweep_lamports: string;
   msg_hash: string;
   signature: string | null;
   status: string;
@@ -34,11 +35,12 @@ export const withdrawalsRepo = {
       decimals: number;
       usd: number | null;
       rentLamports: number;
+      sweepLamports: bigint;
       msgHash: string;
       t: number;
     },
-  ) => sql`INSERT INTO withdrawals (id, user_id, wallet, to_address, mint, symbol, amount_raw, decimals, usd, rent_lamports, msg_hash, status, created_at)
-           VALUES (${w.id}, ${w.userId}, ${w.wallet}, ${w.to}, ${w.mint}, ${w.symbol}, ${w.amountRaw}, ${w.decimals}, ${w.usd}, ${w.rentLamports}, ${w.msgHash}, 'quoted', ${w.t})`,
+  ) => sql`INSERT INTO withdrawals (id, user_id, wallet, to_address, mint, symbol, amount_raw, decimals, usd, rent_lamports, sweep_lamports, msg_hash, status, created_at)
+           VALUES (${w.id}, ${w.userId}, ${w.wallet}, ${w.to}, ${w.mint}, ${w.symbol}, ${w.amountRaw}, ${w.decimals}, ${w.usd}, ${w.rentLamports}, ${w.sweepLamports.toString()}, ${w.msgHash}, 'quoted', ${w.t})`,
   byId: (sql: Sql, id: string, userId: string) =>
     sql<WithdrawalRow[]>`SELECT * FROM withdrawals WHERE id = ${id} AND user_id = ${userId}`,
   sentLastHour: (sql: Sql, userId: string, since: number) =>
