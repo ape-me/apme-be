@@ -30,6 +30,8 @@ const FEE_BPS = 100;
 const REFERRAL_SHARE = 0.2;
 const MAX_SPONSORED_PER_HOUR = 20;
 const QUOTE_TTL_S = 45;
+// Ondo fills through Jupiter's RFQ: the maker's own quote goes stale well inside our flat window.
+const RFQ_QUOTE_TTL_S = 15;
 const ORDER_BASE = "https://api.jup.ag/swap/v2";
 
 export const jupBase = (env: Env) => (env.JUP_API_KEY ? "https://api.jup.ag" : "https://lite-api.jup.ag");
@@ -271,6 +273,8 @@ export async function quote(
   const { o, side, inputMint, outputMint, amount, feeRaw, inUsd, outUsd, stock } = b;
   const id = crypto.randomUUID();
   const t = now();
+  const ttlS = stock.issuer === "ondo" ? RFQ_QUOTE_TTL_S : QUOTE_TTL_S;
+  const expiresAt = Math.min(t + ttlS, Number(o.expireAt ?? Infinity));
   const priceImpactPct = Number(o.priceImpact);
   const premiumPct = stock.premium_pct == null ? null : Number(stock.premium_pct);
   await swapsRepo.insertQuote(sql, {
@@ -300,6 +304,7 @@ export async function quote(
     issuerFeeUsd: b.issuerFeeUsd,
     msgHash: b.msgHash,
     lastValidBlockHeight: Number(o.lastValidBlockHeight ?? 0),
+    expiresAt,
     t,
   });
   return {
@@ -337,7 +342,7 @@ export async function quote(
     markUsd: stock.mark_usd == null ? null : Number(stock.mark_usd),
     transaction: o.transaction,
     signers: { feePayer: b.feePayer, user: q.taker },
-    expiresAt: Math.min(t + QUOTE_TTL_S, Number(o.expireAt ?? Infinity)),
+    expiresAt,
   };
 }
 
@@ -399,7 +404,7 @@ export async function submit(
   if (!row) throw notFound("quote");
   if (row.status !== "quoted") throw new HttpError(409, `quote already ${row.status}`);
   const t = now();
-  if (t > Number(row.created_at) + QUOTE_TTL_S) {
+  if (t > Number(row.expires_at)) {
     await swapsRepo.markFailed(sql, row.id, "quote_expired");
     throw new HttpError(410, "quote_expired");
   }
