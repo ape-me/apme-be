@@ -124,6 +124,23 @@ export async function insights(env: Env, sql: Sql, mint: string) {
             growthSinceLaunchPct: Math.round((Number(stock.multiplier ?? 1) - 1) * 10000) / 100,
           }
         : { mechanism: null, yieldPct: null, multiplier: 1, growthSinceLaunchPct: 0 },
+    // PreStocks names have no exchange print: the reference is the issuer's own mark of the private company, and the
+    // implied valuation is what the on-chain price says it is worth. The gap between them is the premium.
+    preipo:
+      stock.issuer === "prestocks"
+        ? {
+            // Derived from the same on-chain price as premiumPct so the three numbers always agree; PreStocks'
+            // own impliedValuation prices off their tokenPrice, which can sit a few percent from the pool.
+            impliedValuationUsd:
+              stock.mark_valuation != null && stock.premium_pct != null
+                ? Math.round(stock.mark_valuation * (1 + stock.premium_pct / 100))
+                : null,
+            referenceValuationUsd: num(stock.mark_valuation),
+            referencePriceUsd: num(stock.mark_usd),
+            premiumPct: num(stock.premium_pct),
+            supply: num(stock.supply),
+          }
+        : null,
     company: profile
       ? {
           name: profile.name,

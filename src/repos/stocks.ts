@@ -29,13 +29,16 @@ export type StockRow = {
   sells_24h: number | null;
   halted: boolean;
   underlying: string | null;
+  mark_valuation: number | null;
+  supply: number | null;
 };
 
 export const Category = ["stock", "etf", "preipo", "crypto", "earn"] as const;
 export type Category = (typeof Category)[number];
 const COLS = (sql: Sql) => sql`
   s.mint, s.symbol, s.name, s.issuer, s.category, s.decimals, s.logo, s.price_usd, s.change_24h, s.multiplier, s.tags,
-  s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h, s.halted, s.underlying`;
+  s.mark_usd, s.premium_pct, s.liquidity_usd, s.vol_24h_usd, s.buys_24h, s.sells_24h, s.halted, s.underlying,
+  s.mark_valuation, s.supply`;
 // Only what can be traded reaches a card: priced, pooled, not excluded. Ondo fills through Jupiter's RFQ, so
 // its pool depth says nothing about whether it trades.
 const live = (sql: Sql) =>
