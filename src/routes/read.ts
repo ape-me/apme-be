@@ -11,6 +11,7 @@ import { news, IMPACT_LEVEL } from "../services/news";
 import { insights } from "../services/insights";
 import { depth } from "../services/swap";
 import { activityPage } from "../services/activity";
+import { referralLeaderboard } from "../services/account";
 import { orderConfig } from "../services/orders";
 import { market } from "../services/market";
 import { wallet } from "../services/portfolio";
@@ -52,6 +53,16 @@ read.get("/stocks", (c) =>
       return c.json(await catalog.stocksByMints(c.get("sql"), parse(MintList, q.mints.split(",")))); // ?mints=a,b,c: watchlist lookup
     const issuers = q.issuer ? parse(z.array(Issuer), q.issuer.split(",")) : undefined;
     return c.json(await catalog.stocks(c.get("sql"), issuers, q.collection, q.category));
+  }),
+);
+
+read.get("/leaderboard", (c) =>
+  cached(c.req.raw, 60, async () => {
+    const q = parse(
+      z.object({ window: z.enum(["week", "all"]).default("week"), limit: Limit.default(20) }),
+      c.req.query(),
+    );
+    return c.json(await referralLeaderboard(c.get("sql"), q.window, q.limit));
   }),
 );
 

@@ -141,6 +141,16 @@ export const accountRepo = {
   >`
     SELECT u.id, u.handle, r.created_at AS joined_at, (SELECT SUM(in_usd) FROM swaps s WHERE s.user_id = u.id AND s.status = 'confirmed') AS volume_usd
     FROM referrals r JOIN users u ON u.id = r.referee_user_id WHERE r.referrer_user_id = ${referrerId} ORDER BY r.created_at DESC`,
+  // Referrers ranked by what their referees traded since `since`. The inner join on swaps drops anyone whose
+  // referees never traded, so signups alone never rank.
+  leaderboard: (sql: Sql, since: number, limit: number) => sql<
+    { handle: string | null; avatar_url: string | null; referees: number; volume_usd: number }[]
+  >`
+    SELECT u.handle, u.avatar_url, COUNT(DISTINCT s.user_id)::int AS referees, SUM(s.in_usd) AS volume_usd
+    FROM referrals r
+    JOIN users u ON u.id = r.referrer_user_id AND u.deleted_at IS NULL
+    JOIN swaps s ON s.user_id = r.referee_user_id AND s.status = 'confirmed' AND s.confirmed_at >= ${since}
+    GROUP BY u.id ORDER BY volume_usd DESC LIMIT ${limit}`,
   earnings: (sql: Sql, referrerId: string) => sql<{ earned: number | null; claimable: number | null }[]>`
     SELECT SUM(amount_usd) AS earned, SUM(amount_usd) FILTER (WHERE status = 'accrued') AS claimable FROM referral_earnings WHERE referrer_user_id = ${referrerId}`,
 

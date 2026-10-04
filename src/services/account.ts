@@ -194,6 +194,28 @@ export async function referrals(sql: Sql, user: UserRow) {
   };
 }
 
+// Monday 00:00 UTC of the week containing `t`: the same boundary the weekly bonus pool will settle on.
+const weekStart = (t: number) => {
+  const d = new Date(t * 1000);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((d.getUTCDay() + 6) % 7)) / 1000;
+};
+
+export async function referralLeaderboard(sql: Sql, window: "week" | "all", limit: number) {
+  const since = window === "week" ? weekStart(now()) : 0;
+  const rows = await accountRepo.leaderboard(sql, since, limit);
+  return {
+    window,
+    resetsAt: window === "week" ? since + 7 * 86_400 : null,
+    entries: rows.map((r, i) => ({
+      rank: i + 1,
+      handle: r.handle,
+      avatarUrl: r.avatar_url,
+      referees: r.referees,
+      volumeUsd: Math.round(Number(r.volume_usd) * 100) / 100,
+    })),
+  };
+}
+
 const MIN_CLAIM_USD = 1;
 
 // Pay all accrued rows in one USDC transfer from the gas wallet; mark paid only after the send succeeds.
