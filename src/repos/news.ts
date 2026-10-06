@@ -63,8 +63,13 @@ export const newsRepo = {
     >`SELECT id, title FROM news WHERE scope = 'market' AND published_at > ${since}`,
   setImage: (sql: Sql, id: string, image: string) =>
     sql`UPDATE news SET image = ${image} WHERE id = ${id} AND image IS NULL`,
+  // A story about Apple belongs on every Apple token (AAPLx, AAPLon, ...), not only the one it was matched under.
   tag: (sql: Sql, newsId: string, mint: string, relevance: number) =>
-    sql`INSERT INTO news_stocks (news_id, mint, relevance) VALUES (${newsId}, ${mint}, ${relevance}) ON CONFLICT DO NOTHING`,
+    sql`INSERT INTO news_stocks (news_id, mint, relevance)
+        SELECT ${newsId}, sib.mint, ${relevance} FROM stocks s
+        JOIN stocks sib ON coalesce(sib.underlying, sib.mint) = coalesce(s.underlying, s.mint)
+        WHERE s.mint = ${mint} AND NOT sib.excluded
+        ON CONFLICT DO NOTHING`,
   score: (
     sql: Sql,
     id: string,
@@ -126,9 +131,22 @@ export const newsRepo = {
       WHERE rn <= ${a.perStock} AND dup = 1
       ORDER BY ${a.mints.length ? sql`(mint IN ${sql(a.mints)}) DESC,` : sql``} published_at DESC LIMIT ${a.limit}`,
   prune: (sql: Sql, before: number) => sql`DELETE FROM news WHERE published_at < ${before}`,
+  // One row per company the app shows, its deepest token standing in for the rest. `pooled` is false for names
+  // only Ondo carries: they fill over RFQ, have no pool, and get polled less often.
   stocksForNews: (sql: Sql) =>
     sql<
-      { mint: string; symbol: string; name: string; issuer: string }[]
-    >`SELECT mint, symbol, name, issuer FROM stocks
-        WHERE NOT excluded AND category IN ('stock', 'etf', 'preipo') AND coalesce(liquidity_usd, 0) >= 5000 ORDER BY symbol`, // only what the app shows: the catalog is 2,300 mints, Finnhub is one call per ticker
+      {
+        mint: string;
+        symbol: string;
+        name: string;
+        issuer: string;
+        underlying: string | null;
+        pooled: boolean;
+      }[]
+    >`SELECT DISTINCT ON (coalesce(underlying, mint)) mint, symbol, name, issuer, underlying,
+             coalesce(liquidity_usd, 0) >= 5000 AS pooled
+        FROM stocks
+        WHERE NOT excluded AND price_usd IS NOT NULL AND category IN ('stock', 'etf', 'preipo')
+          AND (coalesce(liquidity_usd, 0) >= 5000 OR issuer = 'ondo')
+        ORDER BY coalesce(underlying, mint), coalesce(liquidity_usd, 0) DESC`,
 };

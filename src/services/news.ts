@@ -35,13 +35,67 @@ const MACRO =
 
 // Match the company name case-insensitively, the ticker only in caps: lowercase "ups" is a word, "UPS" is a company.
 const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-type Stock = { mint: string; symbol: string; name: string; issuer: string };
+type Stock = {
+  mint: string;
+  symbol: string;
+  name: string;
+  issuer: string;
+  underlying: string | null;
+  pooled: boolean;
+};
+// Ondo-only names are mostly smaller companies and ETFs whose first word is generic ("Global", "iShares", "Trump"),
+// so they match on the full name without its corporate suffix, never on the first word alone.
+const SUFFIX =
+  /^the\s+|[\s,]+(inc|incorporated|corp|corporation|company|co|holdings?|ltd|limited|plc|group|n\.?v|s\.?a|class [a-z]|etf|trust|fund)\.?$/i;
+const bareName = (name: string) => {
+  let n = name.trim();
+  for (let prev = ""; prev !== n;) [prev, n] = [n, n.replace(SUFFIX, "").trim()];
+  return n;
+};
+// Two-letter tickers that are also everyday words or abbreviations only count when written as $ON or (ON).
+const AMBIGUOUS_TICKERS = new Set([
+  "ON",
+  "SO",
+  "BE",
+  "DE",
+  "LI",
+  "MA",
+  "PL",
+  "AG",
+  "MP",
+  "TM",
+  "TT",
+  "WS",
+  "FN",
+]);
+// Names that headlines use for something else even when capitalised ("Settlers Block", "Williams F1"): ticker only.
+const AMBIGUOUS_NAMES = new Set([
+  "Block",
+  "Bullish",
+  "Flex",
+  "Grab",
+  "Nova",
+  "Southern",
+  "Westlake",
+  "Williams",
+]);
 const matcher = (s: Stock) => {
   const first = s.name.split(/[\s,.]+/)[0]!;
-  const names = [s.name, first].filter((x) => x.length > 3);
-  const byName = names.length ? new RegExp(`\\b(${names.map(esc).join("|")})\\b`, "i") : null;
+  const names = (s.pooled ? [s.name, first] : [bareName(s.name)]).filter(
+    (x) => x.length > 3 && (s.pooled || !AMBIGUOUS_NAMES.has(x)),
+  );
+  // A one-word name like Block, Visa or Bullish is also an everyday word: only the capitalised form counts.
+  const exactCase = !s.pooled && names.length === 1 && !/\s/.test(names[0]!);
+  const byName = names.length
+    ? new RegExp(`\\b(${names.map(esc).join("|")})\\b`, exactCase ? "" : "i")
+    : null;
   const t = tickerOf(s);
-  const byTicker = t && t.length > 1 ? new RegExp(`\\b${esc(t)}\\b`) : null;
+  const byTicker =
+    t && t.length > 1
+      ? new RegExp(
+          !s.pooled && AMBIGUOUS_TICKERS.has(t) ? `(\\$${esc(t)}\\b|\\(${esc(t)}\\))` : `\\b${esc(t)}\\b`,
+        )
+      : null;
   return (title: string) => !!(byName?.test(title) || byTicker?.test(title));
 };
 
@@ -340,12 +394,13 @@ export async function scoreNews(env: Env, sql: Sql, limit = 120) {
   return { scored, dropped };
 }
 
-// Cron body: half the universe per run (each stock every 10 min), cheap filter, store, tag, notify rooms.
+// Cron body: a slice of the universe per run, cheap filter, store, tag, notify rooms.
 export async function ingestNews(env: Env, sql: Sql, minute: number) {
-  // A Worker gets 1000 subrequests per invocation and each article costs one redirect fetch, so the universe is
-  // walked in quarters (every stock every 20 min) with a cap per stock.
+  // Finnhub allows 60 calls a minute and each stock is one, so pooled names are walked in quarters (every 20 min)
+  // and Ondo-only names in twelfths (every hour), with a cap per stock.
   const stocks = await newsRepo.stocksForNews(sql);
-  const slice = stocks.filter((_, i) => i % 4 === Math.floor(minute / 5) % 4);
+  const run = Math.floor(minute / 5);
+  const slice = stocks.filter((s, i) => (s.pooled ? i % 4 === run % 4 : i % 12 === run % 12));
   const t = Math.floor(Date.now() / 1000);
   const fresh: z.infer<typeof IngestNews>[] = [];
   let added = 0;
