@@ -80,8 +80,13 @@ type QuoteInput = {
   slippageBps?: number;
 };
 
-async function order(env: Env, params: Record<string, string>): Promise<Order> {
+async function order(env: Env, params: Record<string, string>, tries = 3): Promise<Order> {
   const r = await fetch(`${ORDER_BASE}/order?${new URLSearchParams(params)}`, { headers: jupHeaders(env) });
+  // A basket quotes several stocks back to back; ride out a short burst limit instead of failing the basket.
+  if (r.status === 429 && tries > 1) {
+    await new Promise((ok) => setTimeout(ok, 1500));
+    return order(env, params, tries - 1);
+  }
   const j = (await r.json()) as Order;
   if (!r.ok || j.error) {
     const msg = (j.error ?? `${r.status}`).toLowerCase();
