@@ -32,6 +32,7 @@ type SwapRow = {
   signed_tx: string | null;
   last_valid_block_height: string | null;
   expires_at: string;
+  basket_order_id: string | null;
   created_at: string;
   submitted_at: string | null;
   confirmed_at: string | null;
@@ -68,12 +69,13 @@ export const swapsRepo = {
       msgHash: string;
       lastValidBlockHeight: number;
       expiresAt: number;
+      basketOrderId: string | null;
       t: number;
     },
   ) => sql`INSERT INTO swaps (id, user_id, wallet, side, input_mint, output_mint, symbol, in_raw, out_raw, min_out_raw, in_usd, out_usd, fee_bps, fee_raw, fee_usd,
-                               price_impact_pct, premium_pct, payer, router, jup_request_id, gas_lamports, rent_lamports, swap_usd, issuer_fee_usd, msg_hash, last_valid_block_height, expires_at, status, created_at)
+                               price_impact_pct, premium_pct, payer, router, jup_request_id, gas_lamports, rent_lamports, swap_usd, issuer_fee_usd, msg_hash, last_valid_block_height, expires_at, basket_order_id, status, created_at)
            VALUES (${s.id}, ${s.userId}, ${s.wallet}, ${s.side}, ${s.inputMint}, ${s.outputMint}, ${s.symbol}, ${s.inRaw}, ${s.outRaw}, ${s.minOutRaw}, ${s.inUsd}, ${s.outUsd},
-                   ${s.feeBps}, ${s.feeRaw}, ${s.feeUsd}, ${s.priceImpactPct}, ${s.premiumPct}, ${s.payer}, ${s.router}, ${s.requestId}, ${s.gasLamports}, ${s.rentLamports}, ${s.swapUsd}, ${s.issuerFeeUsd}, ${s.msgHash}, ${s.lastValidBlockHeight}, ${s.expiresAt}, 'quoted', ${s.t})`,
+                   ${s.feeBps}, ${s.feeRaw}, ${s.feeUsd}, ${s.priceImpactPct}, ${s.premiumPct}, ${s.payer}, ${s.router}, ${s.requestId}, ${s.gasLamports}, ${s.rentLamports}, ${s.swapUsd}, ${s.issuerFeeUsd}, ${s.msgHash}, ${s.lastValidBlockHeight}, ${s.expiresAt}, ${s.basketOrderId}, 'quoted', ${s.t})`,
   // A limit order that filled is a trade like any other: activity, cost basis and positions all read swaps.
   insertFill: (
     sql: Sql,
@@ -113,10 +115,12 @@ export const swapsRepo = {
   volumeFor: (sql: Sql, userId: string) =>
     sql<{ volume_usd: number | null }[]>`SELECT SUM(in_usd) AS volume_usd FROM swaps
       WHERE user_id = ${userId} AND status = 'confirmed'`,
-  sponsoredLastHour: (sql: Sql, userId: string, since: number) =>
+  // A basket counts once, however many stocks it holds, and never against its own other legs.
+  sponsoredLastHour: (sql: Sql, userId: string, since: number, group: string) =>
     sql<
       { n: number }[]
-    >`SELECT COUNT(*)::int AS n FROM swaps WHERE user_id = ${userId} AND payer = 'apeme' AND status IN ('submitted','confirmed') AND created_at > ${since}`,
+    >`SELECT COUNT(DISTINCT coalesce(basket_order_id, id))::int AS n FROM swaps WHERE user_id = ${userId} AND payer = 'apeme' AND status IN ('submitted','confirmed') AND created_at > ${since}
+        AND coalesce(basket_order_id, id) <> ${group}`,
   // Referrer's cut of our fee, once per confirmed swap (swap_id is unique).
   accrueReferral: (
     sql: Sql,

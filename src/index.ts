@@ -12,6 +12,7 @@ import { me } from "./routes/me";
 import { swap, tx } from "./routes/swap";
 import { orders } from "./routes/orders";
 import { withdraw } from "./routes/withdraw";
+import { baskets } from "./routes/baskets";
 import { apelistRoute } from "./routes/apelist";
 
 export { Room } from "./do/room";
@@ -44,6 +45,8 @@ app.get("/", (c) =>
       "/v1/stocks/:mint",
       "/v1/stocks/:mint/history?range=5m|15m|1h|1d|1w|1m",
       "/v1/stocks/:mint/news",
+      "/v1/baskets",
+      "/v1/baskets/:id",
       "/v1/wallet/:address",
       "/v1/wallet/:address/activity",
     ],
@@ -99,6 +102,7 @@ app.route("/v1/me", me);
 app.route("/v1/swap", swap);
 app.route("/v1/orders", orders);
 app.route("/v1/withdraw", withdraw);
+app.route("/v1/baskets", baskets);
 app.route("/v1/tx", tx);
 app.route("/ws", ws);
 

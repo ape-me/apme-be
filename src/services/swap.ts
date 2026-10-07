@@ -262,6 +262,7 @@ export async function quote(
   wallets: WalletRow[],
   settings: SettingsRow,
   q: QuoteInput,
+  basketOrderId: string | null = null,
 ) {
   if (!wallets.some((w) => w.address === q.taker && w.chain === "solana"))
     throw new HttpError(403, "taker is not one of your wallets");
@@ -305,6 +306,7 @@ export async function quote(
     msgHash: b.msgHash,
     lastValidBlockHeight: Number(o.lastValidBlockHeight ?? 0),
     expiresAt,
+    basketOrderId,
     t,
   });
   return {
@@ -408,7 +410,9 @@ export async function submit(
     await swapsRepo.markFailed(sql, row.id, "quote_expired");
     throw new HttpError(410, "quote_expired");
   }
-  const n = Number((await swapsRepo.sponsoredLastHour(sql, user.id, t - 3600))[0]?.n ?? 0);
+  const n = Number(
+    (await swapsRepo.sponsoredLastHour(sql, user.id, t - 3600, row.basket_order_id ?? row.id))[0]?.n ?? 0,
+  );
   if (n >= MAX_SPONSORED_PER_HOUR) throw new HttpError(429, "too many trades this hour");
 
   const tx = await signedByUser(signedTransaction, row.wallet, row.msg_hash);

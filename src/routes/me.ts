@@ -22,6 +22,7 @@ import {
 } from "../services/account";
 import { accountRepo } from "../repos/account";
 import { catalog } from "../services/catalog";
+import { basketPositions } from "../services/baskets";
 
 const shapeMe = (
   c: { env: Env },
@@ -98,6 +99,8 @@ me.get("/referrals", async (c) => c.json(await referrals(c.get("sql"), c.get("us
 me.post("/referrals/claim", async (c) =>
   c.json(await claimReferrals(c.env, c.get("sql"), c.get("user"), c.get("wallets"))),
 );
+
+me.get("/baskets", async (c) => c.json(await basketPositions(c.get("sql"), c.get("user").id)));
 
 me.get("/settings", (c) => c.json(shapeSettings(c.get("settings"))));
 const Settings = z.object({
