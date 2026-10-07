@@ -284,7 +284,7 @@ async function quoteLegs(
               c.sql,
               c.user,
               c.wallets,
-              c.settings,
+              { ...c.settings, slippage_bps: 0 }, // auto: Jupiter sizes it per stock, pre-IPO needs more than a flat 1%
               { ...mints, amount: l.amount.toString(), taker, sponsor: true },
               orderId,
             ).catch((e: Error) => {
