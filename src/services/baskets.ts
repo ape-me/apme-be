@@ -283,7 +283,7 @@ async function quoteLegs(
               c.user,
               c.wallets,
               c.settings,
-              { ...mints, amount: l.amount.toString(), taker },
+              { ...mints, amount: l.amount.toString(), taker, sponsor: true },
               orderId,
             ).catch((e: Error) => {
               throw new HttpError(e instanceof HttpError ? e.status : 500, `${l.symbol}: ${e.message}`, {
