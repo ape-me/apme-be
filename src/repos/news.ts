@@ -112,6 +112,7 @@ export const newsRepo = {
       minImpact: number;
       perStock: number;
       withImage: boolean;
+      only?: boolean; // just these mints, not merely these first
     },
   ) =>
     sql<
@@ -127,7 +128,8 @@ export const newsRepo = {
       WHERE NOT n.junk AND NOT s.excluded AND n.impact IS NOT NULL AND n.impact >= ${a.minImpact}
         AND n.published_at > ${Math.floor(Date.now() / 1000) - 7 * 86400}
         ${a.before ? sql`AND n.published_at < ${a.before}` : sql``}
-        ${a.withImage ? sql`AND n.image IS NOT NULL` : sql``}) x
+        ${a.withImage ? sql`AND n.image IS NOT NULL` : sql``}
+        ${a.only && a.mints.length ? sql`AND ns.mint IN ${sql(a.mints)}` : sql``}) x
       WHERE rn <= ${a.perStock} AND dup = 1
       ORDER BY ${a.mints.length ? sql`(mint IN ${sql(a.mints)}) DESC,` : sql``} published_at DESC LIMIT ${a.limit}`,
   prune: (sql: Sql, before: number) => sql`DELETE FROM news WHERE published_at < ${before}`,

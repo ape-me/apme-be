@@ -8,7 +8,7 @@ import { requireAuth, requireActive, requireRegion, type AuthVars } from "../mid
 import { cached } from "../lib/cache";
 import { parse } from "../lib/validate";
 import { Mint } from "../contract";
-import { basketList, basketDetail, quoteBuy, quoteSell, submitBasket } from "../services/baskets";
+import { basketList, basketDetail, basketNews, quoteBuy, quoteSell, submitBasket } from "../services/baskets";
 
 type C = Context<{ Bindings: Env; Variables: AuthVars }>;
 const ctx = (c: C) => ({
@@ -24,6 +24,12 @@ export const baskets = new Hono<{ Bindings: Env; Variables: AuthVars }>();
 
 baskets.get("/", rateLimited, withDb, (c) =>
   cached(c.req.raw, 60, async () => c.json(await basketList(c.get("sql")))),
+);
+baskets.get("/:id/news", rateLimited, withDb, (c) =>
+  cached(c.req.raw, 60, async () => {
+    const limit = parse(z.coerce.number().int().min(1).max(50).default(20), c.req.query("limit"));
+    return c.json(await basketNews(c.get("sql"), c.req.param("id"), limit));
+  }),
 );
 baskets.get("/:id", rateLimited, withDb, (c) =>
   cached(c.req.raw, 60, async () => c.json(await basketDetail(c.get("sql"), c.req.param("id")))),

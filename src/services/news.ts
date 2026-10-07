@@ -570,6 +570,7 @@ export const news = {
       minImpact: number;
       perStock: number;
       withImage: boolean;
+      only?: boolean;
     },
   ) => (await newsRepo.feed(sql, a)).map(shapeNews),
   market: async (

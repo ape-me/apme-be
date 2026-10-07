@@ -1,15 +1,12 @@
 // Daily closes of the real stocks behind each basket, for the 1-year return and chart. Runs on the prod box once a
 // day: Yahoo turns away Worker IPs. Private companies come from our own price snapshots instead.
 import postgres from "postgres";
-import { BASKETS } from "../src/services/baskets";
+import { BASKETS, YAHOO, tickersOf } from "../src/services/baskets";
 import { basketsRepo } from "../src/repos/baskets";
 
-// Yahoo spells a few tickers its own way.
-const YAHOO: Record<string, string> = { "BRK.B": "BRK-B", SKHY: "000660.KS" };
-
 const sql = postgres(process.env.DATABASE_URL!, { max: 2, prepare: false, idle_timeout: 5 });
-const priv = new Set(BASKETS.filter((b) => b.private).flatMap((b) => b.tickers));
-const tickers = [...new Set(BASKETS.flatMap((b) => b.tickers))];
+const priv = new Set(BASKETS.filter((b) => b.private).flatMap(tickersOf));
+const tickers = [...new Set(BASKETS.flatMap(tickersOf))];
 const done: Record<string, number | string> = {};
 
 for (const t of tickers) {
