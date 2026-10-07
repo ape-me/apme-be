@@ -210,7 +210,8 @@ function holdings(legs: BasketLeg[], wallet?: string) {
 }
 
 export async function basketPositions(sql: Sql, userId: string) {
-  const held = holdings(await basketsRepo.legs(sql, userId));
+  const legs = await basketsRepo.legs(sql, userId);
+  const held = holdings(legs);
   const mints = [...new Set([...held.values()].flatMap((m) => [...m.keys()]))];
   const rows = new Map(mints.length ? (await stocksRepo.byMints(sql, mints)).map((r) => [r.mint, r]) : []);
   const positions = [...held].flatMap(([basketId, m]) => {
@@ -239,6 +240,7 @@ export async function basketPositions(sql: Sql, userId: string) {
         pnlUsd: round2(valueUsd - paidUsd),
         pnlPct: paidUsd ? round2((valueUsd / paidUsd - 1) * 100) : null,
         openedAt: Math.min(...parts.map((x) => x.opened)),
+        rebalance: legs.some((l) => l.basket_id === basketId && l.rebalance), // coming soon: always false today
         stocks: parts.map((x) => x.stock),
       },
     ];

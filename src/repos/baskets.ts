@@ -9,6 +9,7 @@ export type BasketLeg = {
   in_raw: string;
   out_raw: string | null;
   in_usd: number | null;
+  rebalance: boolean;
   created_at: string;
 };
 
@@ -34,7 +35,7 @@ export const basketsRepo = {
     sql`UPDATE basket_orders SET status = ${status} WHERE id = ${id}`,
   // Every confirmed swap a user made inside a basket: what each basket bought, sold, and paid.
   legs: (sql: Sql, userId: string) => sql<BasketLeg[]>`
-    SELECT o.basket_id, s.wallet, s.side, s.input_mint, s.output_mint, s.in_raw, s.out_raw, s.in_usd, o.created_at
+    SELECT o.basket_id, s.wallet, s.side, s.input_mint, s.output_mint, s.in_raw, s.out_raw, s.in_usd, o.rebalance, o.created_at
     FROM swaps s JOIN basket_orders o ON o.id = s.basket_order_id
     WHERE o.user_id = ${userId} AND s.status = 'confirmed' ORDER BY o.created_at`,
   closes: (sql: Sql, tickers: readonly string[], from: number) =>
