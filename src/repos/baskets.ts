@@ -1,6 +1,7 @@
 import type { Sql } from "../lib/db";
 
 export type BasketLeg = {
+  order_id: string;
   basket_id: string;
   wallet: string;
   side: string;
@@ -47,9 +48,18 @@ export const basketsRepo = {
     sql`UPDATE basket_orders SET status = ${status} WHERE id = ${id}`,
   // Every confirmed swap a user made inside a basket: what each basket bought, sold, and paid.
   legs: (sql: Sql, userId: string) => sql<BasketLeg[]>`
-    SELECT o.basket_id, s.wallet, s.side, s.input_mint, s.output_mint, s.in_raw, s.out_raw, s.in_usd, o.rebalance, o.created_at
+    SELECT o.id AS order_id, o.basket_id, s.wallet, s.side, s.input_mint, s.output_mint, s.in_raw, s.out_raw, s.in_usd, o.rebalance, o.created_at
     FROM swaps s JOIN basket_orders o ON o.id = s.basket_order_id
     WHERE o.user_id = ${userId} AND s.status = 'confirmed' ORDER BY o.created_at`,
+  // The deepest token's last price at or before `ts`: what an underlying traded at, minute by minute.
+  priceAt: async (sql: Sql, underlying: string, ts: number) =>
+    (
+      await sql<{ price_usd: number }[]>`
+      SELECT price_usd FROM stock_snapshots WHERE price_usd IS NOT NULL AND ts <= ${ts}
+        AND mint = (SELECT mint FROM stocks WHERE coalesce(underlying, symbol) = ${underlying} AND NOT excluded
+          ORDER BY coalesce(liquidity_usd, 0) DESC LIMIT 1)
+      ORDER BY ts DESC LIMIT 1`
+    )[0]?.price_usd ?? null,
   closes: (sql: Sql, tickers: readonly string[], from: number) =>
     sql<{ ticker: string; ts: string; close: number }[]>`
       SELECT ticker, ts, close FROM daily_closes WHERE ticker IN ${sql(tickers)} AND ts >= ${from} ORDER BY ts`,
