@@ -426,17 +426,19 @@ async function quoteLegs(
   taker: string,
   amountUsd: number,
   legs: { mint: string; symbol: string; amount: bigint; weight: number }[],
+  existing?: string, // a retry adds legs to the order it is finishing
 ) {
-  const orderId = crypto.randomUUID();
-  await basketsRepo.insertOrder(c.sql, {
-    id: orderId,
-    userId: c.user.id,
-    wallet: taker,
-    basketId,
-    side,
-    amountUsd,
-    t: now(),
-  });
+  const orderId = existing ?? crypto.randomUUID();
+  if (!existing)
+    await basketsRepo.insertOrder(c.sql, {
+      id: orderId,
+      userId: c.user.id,
+      wallet: taker,
+      basketId,
+      side,
+      amountUsd,
+      t: now(),
+    });
   const quoted: (Awaited<ReturnType<typeof quote>> & { weight: number })[] = [];
   try {
     for (let i = 0; i < legs.length; i += QUOTE_CONCURRENCY)
@@ -465,7 +467,7 @@ async function quoteLegs(
         )),
       );
   } catch (e) {
-    await basketsRepo.setStatus(c.sql, orderId, "failed");
+    if (!existing) await basketsRepo.setStatus(c.sql, orderId, "failed");
     throw e;
   }
   return {
@@ -515,7 +517,9 @@ export async function quoteSell(c: Ctx, id: string, taker: string) {
   const sell = [...(held ?? [])].flatMap(([mint, h]) => {
     const r = rows.get(mint);
     const left = h.bought - h.sold;
-    const amount = left < (onChain.get(mint) ?? 0n) ? left : (onChain.get(mint) ?? 0n);
+    const bal = onChain.get(mint) ?? 0n;
+    // A fill can land a hair above its quote: sell that dust too instead of stranding it.
+    const amount = bal <= left + left / 1000n ? bal : left;
     if (!r || amount <= 0n) return [];
     return [
       {
@@ -538,7 +542,16 @@ export async function quoteSell(c: Ctx, id: string, taker: string) {
   );
 }
 
-// Every signed leg goes out at once; the order is done, partial or failed by how many landed.
+type OrderLeg = Awaited<ReturnType<typeof basketsRepo.orderLegs>>[number];
+const stockOf = (l: OrderLeg) => (l.side === "buy" ? l.output_mint : l.input_mint);
+// Done when every stock in the order has a landed leg, however many tries it took.
+const orderStatus = (legs: OrderLeg[]) => {
+  const all = new Set(legs.map(stockOf));
+  const landed = new Set(legs.filter((l) => l.status === "confirmed").map(stockOf));
+  return landed.size === all.size ? "done" : landed.size ? "partial" : "failed";
+};
+
+// Every signed leg goes out at once; the order is done, partial or failed by how many stocks landed.
 export async function submitBasket(
   env: Env,
   sql: Sql,
@@ -547,7 +560,7 @@ export async function submitBasket(
   signed: { requestId: string; signedTransaction: string }[],
 ) {
   if (!(await basketsRepo.order(sql, orderId, user.id)).length) throw notFound("basket order");
-  const ids = new Set((await basketsRepo.legIds(sql, orderId)).map((r) => r.id));
+  const ids = new Set((await basketsRepo.orderLegs(sql, orderId)).map((r) => r.id));
   if (signed.some((s) => !ids.has(s.requestId))) throw badRequest("requestId is not part of this order");
   const results = await Promise.allSettled(
     signed.map((s) => submit(env, sql, user, s.requestId, s.signedTransaction)),
@@ -562,8 +575,33 @@ export async function submitBasket(
           error: (r.reason as Error).message,
         },
   );
-  const ok = legs.filter((l) => l.status === "confirmed").length;
-  const status = ok === ids.size ? "done" : ok ? "partial" : "failed";
+  const status = orderStatus(await basketsRepo.orderLegs(sql, orderId));
   await basketsRepo.setStatus(sql, orderId, status);
   return { orderId, status, legs };
+}
+
+// A partial buy: fresh quotes for just the stocks that have not landed, same amounts, same order.
+export async function retryBuy(c: Ctx, orderId: string) {
+  const [o] = await basketsRepo.order(c.sql, orderId, c.user.id);
+  if (!o) throw notFound("basket order");
+  if (o.side !== "buy") throw new HttpError(409, "retry_buy_only", { hint: "call /sell again" });
+  const legs = await basketsRepo.orderLegs(c.sql, orderId);
+  const busy = new Set(legs.filter((l) => l.status === "confirmed" || l.status === "submitted").map(stockOf));
+  const todo = [...new Map(legs.filter((l) => !busy.has(stockOf(l))).map((l) => [stockOf(l), l])).values()];
+  if (!todo.length) throw new HttpError(409, "nothing_to_retry");
+  const stocks = new Set(legs.map(stockOf)).size;
+  return quoteLegs(
+    c,
+    o.basket_id,
+    "buy",
+    o.wallet,
+    round2(todo.reduce((s, l) => s + Number(l.in_raw), 0) / 1e6),
+    todo.map((l) => ({
+      mint: stockOf(l),
+      symbol: l.symbol,
+      amount: BigInt(l.in_raw),
+      weight: round2(100 / stocks),
+    })),
+    orderId,
+  );
 }

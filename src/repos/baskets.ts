@@ -28,9 +28,21 @@ export const basketsRepo = {
   ) => sql`INSERT INTO basket_orders (id, user_id, wallet, basket_id, side, amount_usd, created_at)
            VALUES (${o.id}, ${o.userId}, ${o.wallet}, ${o.basketId}, ${o.side}, ${o.amountUsd}, ${o.t})`,
   order: (sql: Sql, id: string, userId: string) =>
-    sql<{ id: string }[]>`SELECT id FROM basket_orders WHERE id = ${id} AND user_id = ${userId}`,
-  legIds: (sql: Sql, orderId: string) =>
-    sql<{ id: string }[]>`SELECT id FROM swaps WHERE basket_order_id = ${orderId}`,
+    sql<
+      { basket_id: string; side: "buy" | "sell"; wallet: string }[]
+    >`SELECT basket_id, side, wallet FROM basket_orders WHERE id = ${id} AND user_id = ${userId}`,
+  orderLegs: (sql: Sql, orderId: string) =>
+    sql<
+      {
+        id: string;
+        side: string;
+        input_mint: string;
+        output_mint: string;
+        symbol: string;
+        in_raw: string;
+        status: string;
+      }[]
+    >`SELECT id, side, input_mint, output_mint, symbol, in_raw, status FROM swaps WHERE basket_order_id = ${orderId} ORDER BY created_at`,
   setStatus: (sql: Sql, id: string, status: string) =>
     sql`UPDATE basket_orders SET status = ${status} WHERE id = ${id}`,
   // Every confirmed swap a user made inside a basket: what each basket bought, sold, and paid.

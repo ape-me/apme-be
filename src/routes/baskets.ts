@@ -8,7 +8,15 @@ import { requireAuth, requireActive, requireRegion, type AuthVars } from "../mid
 import { cached } from "../lib/cache";
 import { parse } from "../lib/validate";
 import { Mint } from "../contract";
-import { basketList, basketDetail, basketNews, quoteBuy, quoteSell, submitBasket } from "../services/baskets";
+import {
+  basketList,
+  basketDetail,
+  basketNews,
+  quoteBuy,
+  quoteSell,
+  retryBuy,
+  submitBasket,
+} from "../services/baskets";
 
 type C = Context<{ Bindings: Env; Variables: AuthVars }>;
 const ctx = (c: C) => ({
@@ -61,3 +69,7 @@ baskets.post("/orders/:orderId/submit", ...trade, async (c) => {
   const orderId = parse(z.string().uuid(), c.req.param("orderId"));
   return c.json(await submitBasket(c.env, c.get("sql"), c.get("user"), orderId, b.signed));
 });
+
+baskets.post("/orders/:orderId/retry", ...trade, async (c) =>
+  c.json(await retryBuy(ctx(c), parse(z.string().uuid(), c.req.param("orderId")))),
+);
