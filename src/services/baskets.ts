@@ -467,9 +467,8 @@ async function quoteLegs(
               { ...mints, amount: l.amount.toString(), taker, sponsor: true },
               orderId,
             ).catch((e: Error) => {
-              throw new HttpError(e instanceof HttpError ? e.status : 500, `${l.symbol}: ${e.message}`, {
-                symbol: l.symbol,
-              });
+              const h = e instanceof HttpError ? e : null;
+              throw new HttpError(h?.status ?? 500, e.message, { ...h?.data, symbol: l.symbol });
             });
             return { weight: l.weight, ...q };
           }),

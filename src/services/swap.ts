@@ -82,18 +82,23 @@ type QuoteInput = {
 };
 
 async function order(env: Env, params: Record<string, string>, tries = 3): Promise<Order> {
-  const r = await fetch(`${ORDER_BASE}/order?${new URLSearchParams(params)}`, { headers: jupHeaders(env) });
-  // A basket quotes several stocks back to back; ride out a short burst limit instead of failing the basket.
-  if (r.status === 429 && tries > 1) {
-    await new Promise((ok) => setTimeout(ok, 1500));
+  const r = await fetch(`${ORDER_BASE}/order?${new URLSearchParams(params)}`, {
+    headers: jupHeaders(env),
+  }).catch(() => null);
+  const j = ((await r?.json().catch(() => null)) ?? {}) as Order;
+  if (r?.ok && !j.error) return j;
+  const status = r?.status ?? 0;
+  const msg = j.error ?? "";
+  console.error("jupiter order", status, msg, params.inputMint, params.outputMint);
+  // A basket quotes several stocks back to back; ride out a burst limit or a flaky quote instead of failing it.
+  if (tries > 1 && (status === 429 || status === 0 || status >= 500 || /failed to get quotes/i.test(msg))) {
+    await new Promise((ok) => setTimeout(ok, status === 429 ? 1500 : 300));
     return order(env, params, tries - 1);
   }
-  const j = (await r.json()) as Order;
-  if (!r.ok || j.error) {
-    const msg = (j.error ?? `${r.status}`).toLowerCase();
-    throw new HttpError(422, msg.includes("route") ? "no_route" : `jupiter: ${j.error ?? r.status}`);
-  }
-  return j;
+  if (status === 429) throw new HttpError(503, "rate_limited", { upstreamStatus: status });
+  if (/route|failed to get quotes/i.test(msg))
+    throw new HttpError(422, "no_route", { upstreamStatus: status });
+  throw new HttpError(502, "upstream_error", { upstreamStatus: status, upstreamError: msg || null });
 }
 
 // Our Swap v2 referral account and its USDC vault (the referral account's own token account, the form Ultra
@@ -197,7 +202,7 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
       payer = "apeme";
     }
   }
-  if (!o.transaction) throw new HttpError(422, o.errorMessage ? `jupiter: ${o.errorMessage}` : "no_route");
+  if (!o.transaction) throw new HttpError(422, "no_route", { upstreamError: o.errorMessage ?? null });
 
   // Any token account the order opens is billed by Jupiter to whoever it names; ours only on the payer fallback.
   const rentLamports = Number(o.rentFeeLamports ?? 0);
