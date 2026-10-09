@@ -63,8 +63,9 @@ export const stocksRepo = {
   byMint: async (sql: Sql, mint: string) => (await select(sql, sql`AND s.mint = ${mint}`))[0] ?? null,
   byMints: (sql: Sql, mints: string[]) => select(sql, sql`AND s.mint IN ${sql(mints)}`),
   // Last price at each of the 25 hour marks back from `t` (24h ago first), one index probe each; null before the first snapshot.
-  hourly: (sql: Sql, mints: string[], t: number) => sql<{ mint: string; points: (number | null)[] }[]>`
-    SELECT m.mint, array_agg(p.price_usd ORDER BY h.i) AS points
+  // csv, not an array: arrays come back from Hyperdrive as unparsed text.
+  hourly: (sql: Sql, mints: string[], t: number) => sql<{ mint: string; points: string }[]>`
+    SELECT m.mint, string_agg(coalesce(p.price_usd::text, ''), ',' ORDER BY h.i) AS points
     FROM (SELECT mint FROM stocks WHERE mint IN ${sql(mints)}) m
     CROSS JOIN generate_series(0, 24) h(i)
     LEFT JOIN LATERAL (

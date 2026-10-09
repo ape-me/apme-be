@@ -13,7 +13,12 @@ export async function sparks(sql: Sql, mints: string[]): Promise<Map<string, Spa
   const t = Math.floor(Date.now() / 1000);
   const stale = [...new Set(mints)].filter((m) => (memo.get(m)?.at ?? 0) <= t - TTL_S);
   if (stale.length) {
-    const got = new Map((await stocksRepo.hourly(sql, stale, t)).map((r) => [r.mint, r.points]));
+    const got = new Map(
+      (await stocksRepo.hourly(sql, stale, t)).map((r) => [
+        r.mint,
+        r.points.split(",").map((x) => (x === "" ? null : Number(x))),
+      ]),
+    );
     for (const m of stale) {
       const p = got.get(m);
       const spark = p && p[1] != null ? (p.slice(1) as number[]) : null;
