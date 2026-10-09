@@ -6,6 +6,7 @@ import { ata } from "../lib/solana";
 import { txStatus } from "./swap";
 import { swapAct, depositAct, USDC_LOGO, type Act } from "./activity";
 import { PublicKey } from "@solana/web3.js";
+import { sparks } from "./spark";
 import type { WalletResponse } from "../contract";
 import type { z } from "zod";
 
@@ -47,7 +48,9 @@ export async function wallet(
       ...swapRows.map((r) => (r.side === "buy" ? r.output_mint : r.input_mint)),
     ]),
   ].filter((m) => m !== USDC_MINT);
-  const known = mints.length ? await walletRepo.known(sql, mints) : [];
+  const [known, sp] = mints.length
+    ? await Promise.all([walletRepo.known(sql, mints), sparks(sql, mints)])
+    : [[], new Map()];
   const meta = new Map(known.map((k) => [k.mint, k]));
 
   // Cost basis per mint, averaged over every buy we know of.
@@ -98,6 +101,8 @@ export async function wallet(
     feesUsd: 0,
     pnlUsd: null,
     pnlPct: null,
+    spark: null,
+    prevClose: null,
   });
   const solUsd = solUsdPrice == null ? 0 : sol * solUsdPrice;
   if (sol > 0)
@@ -119,6 +124,8 @@ export async function wallet(
       feesUsd: 0,
       pnlUsd: null,
       pnlPct: null,
+      spark: null,
+      prevClose: null,
     });
 
   let stocksUsd = 0,
@@ -170,6 +177,7 @@ export async function wallet(
       feesUsd: round(b?.feesUsd ?? 0)!,
       pnlUsd: round(pnl),
       pnlPct: round(pnlPct),
+      ...(sp.get(t.mint) ?? { spark: null, prevClose: null }),
     });
   }
   holdings.sort((a, b) =>

@@ -49,6 +49,8 @@ export const Stock = z.object({
   stockVol24hUsd: z.number().nullable(),
   buys24h: z.number().int().nullable(),
   sells24h: z.number().int().nullable(),
+  spark: z.array(z.number()).nullable(), // 24 hourly closes over the last 24h, oldest first; null without a day of history
+  prevClose: z.number().nullable(), // price 24h ago: the sparkline's baseline
   tags: z.array(z.string()), // collection ids it belongs to (["ai","mag7"]) plus its group for crypto/earn (majors|l1|defi|memes|solana|earn)
 });
 export const Issuer = z.enum(["xstocks", "backpack", "prestocks", "ondo"]);
@@ -99,6 +101,8 @@ export const Holding = z.object({
   feesUsd: z.number(),
   pnlUsd: z.number().nullable(),
   pnlPct: z.number().nullable(),
+  spark: z.array(z.number()).nullable(),
+  prevClose: z.number().nullable(),
 });
 // Activity rows come from three places: our own swaps (status can be pending/failed), USDC deposits/withdrawals seen
 // on chain, and meme trades from the indexer. `side` is kept for trades; `type` is the field to switch on.

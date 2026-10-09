@@ -2,6 +2,7 @@
 import { tagsFor, pgArr } from "./collections";
 import type { Stock } from "../contract";
 import type { StockRow } from "../repos/stocks";
+import type { Spark } from "./spark";
 
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
 const int = (v: unknown): number => (v == null ? 0 : Number(v));
@@ -44,7 +45,7 @@ export function ondoOpen(now = new Date()): boolean {
 export const tradable = (r: { issuer: string; tags: string[] | string }, now = new Date()) =>
   r.issuer !== "ondo" || pgArr(r.tags).includes("247") || ondoOpen(now);
 
-export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
+export const shapeStock = (r: StockRow, open = marketOpen(), s?: Spark): Stock => ({
   tags: [...new Set([...pgArr(r.tags), ...tagsFor(r)])], // operator/indexer tags (crypto groups) plus every collection it falls in
   mint: r.mint,
   symbol: r.symbol,
@@ -67,4 +68,6 @@ export const shapeStock = (r: StockRow, open = marketOpen()): Stock => ({
   stockVol24hUsd: r.vol_24h_usd == null ? null : Math.round(r.vol_24h_usd),
   buys24h: r.buys_24h == null ? null : int(r.buys_24h),
   sells24h: r.sells_24h == null ? null : int(r.sells_24h),
+  spark: s?.spark ?? null,
+  prevClose: s?.prevClose ?? null,
 });

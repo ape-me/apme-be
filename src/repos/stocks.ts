@@ -62,6 +62,16 @@ export const stocksRepo = {
   all: (sql: Sql, category?: Category) => list(sql, category),
   byMint: async (sql: Sql, mint: string) => (await select(sql, sql`AND s.mint = ${mint}`))[0] ?? null,
   byMints: (sql: Sql, mints: string[]) => select(sql, sql`AND s.mint IN ${sql(mints)}`),
+  // Last price at each of the 25 hour marks back from `t` (24h ago first), one index probe each; null before the first snapshot.
+  hourly: (sql: Sql, mints: string[], t: number) => sql<{ mint: string; points: (number | null)[] }[]>`
+    SELECT m.mint, array_agg(p.price_usd ORDER BY h.i) AS points
+    FROM (SELECT mint FROM stocks WHERE mint IN ${sql(mints)}) m
+    CROSS JOIN generate_series(0, 24) h(i)
+    LEFT JOIN LATERAL (
+      SELECT price_usd FROM stock_snapshots s
+      WHERE s.mint = m.mint AND s.ts <= ${t} - (24 - h.i) * 3600 AND s.ts > ${t - 25 * 3600} AND s.price_usd IS NOT NULL
+      ORDER BY s.ts DESC LIMIT 1) p ON true
+    GROUP BY m.mint`,
   withConfig: (
     sql: Sql,
   ) => sql`SELECT s.mint, s.symbol, s.issuer, s.category, s.excluded, s.tags, c.note, c.updated_at

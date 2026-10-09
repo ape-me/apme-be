@@ -10,6 +10,7 @@ import type { UserRow, WalletRow, SettingsRow } from "../repos/account";
 import { shapeStock, marketOpen, tradable } from "./shape";
 import { quote, submit } from "./swap";
 import { news } from "./news";
+import { sparks, type Spark } from "./spark";
 
 // Ready-made baskets, equal weight. Stocks are real-world tickers so each resolves to its deepest token at request
 // time. `private` ones have no exchange closes; their chart comes from our own price snapshots.
@@ -390,7 +391,10 @@ export async function basketPositions(sql: Sql, userId: string) {
   const legs = await basketsRepo.legs(sql, userId);
   const held = holdings(legs);
   const mints = [...new Set([...held.values()].flatMap((m) => [...m.keys()]))];
-  const rows = new Map(mints.length ? (await stocksRepo.byMints(sql, mints)).map((r) => [r.mint, r]) : []);
+  const [found, sp] = mints.length
+    ? await Promise.all([stocksRepo.byMints(sql, mints), sparks(sql, mints)])
+    : [[], new Map<string, Spark>()];
+  const rows = new Map(found.map((r) => [r.mint, r]));
   const positions = [...held].flatMap(([basketId, m]) => {
     const parts = [...m].map(([mint, h]) => {
       const r = rows.get(mint);
@@ -403,8 +407,22 @@ export async function basketPositions(sql: Sql, userId: string) {
         amount,
         valueUsd: round2(amount * Number(r?.price_usd ?? 0)),
       };
-      return { stock, paid: (h.cost * Number(left)) / Number(h.bought), opened: h.opened };
+      return {
+        stock,
+        paid: (h.cost * Number(left)) / Number(h.bought),
+        opened: h.opened,
+        hourly: sp.get(mint),
+      };
     });
+    // The basket's value at each hour: what it holds now, priced at that hour. Null if any stock lacks the history.
+    const at = (price: (s?: Spark) => number | null | undefined) => {
+      const p = parts.map((x) => price(x.hourly));
+      return p.every((n) => n != null)
+        ? round2(parts.reduce((s, x, i) => s + x.stock.amount * p[i]!, 0))
+        : null;
+    };
+    const hours = Array.from({ length: 24 }, (_, i) => at((s) => s?.spark?.[i]));
+    const spark = hours.every((v) => v != null) ? (hours as number[]) : null;
     const paidUsd = round2(parts.reduce((s, x) => s + x.paid, 0));
     const valueUsd = round2(parts.reduce((s, x) => s + x.stock.valueUsd, 0));
     if (valueUsd < 0.01) return [];
@@ -418,6 +436,8 @@ export async function basketPositions(sql: Sql, userId: string) {
         pnlPct: paidUsd ? round2((valueUsd / paidUsd - 1) * 100) : null,
         openedAt: Math.min(...parts.map((x) => x.opened)),
         rebalance: legs.some((l) => l.basket_id === basketId && l.rebalance), // coming soon: always false today
+        spark,
+        prevClose: at((s) => s?.prevClose),
         stocks: parts.map((x) => x.stock),
       },
     ];
