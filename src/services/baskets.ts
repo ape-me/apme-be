@@ -2,6 +2,8 @@ import type { Env } from "../env";
 import type { Sql } from "../lib/db";
 import { HttpError, badRequest, notFound } from "../lib/errors";
 import { tokenAccounts } from "../lib/rpc";
+import { PublicKey } from "@solana/web3.js";
+import { USDC_MINT, ata, connection } from "../lib/solana";
 import { stocksRepo, type StockRow } from "../repos/stocks";
 import { basketsRepo, type BasketLeg } from "../repos/baskets";
 import type { UserRow, WalletRow, SettingsRow } from "../repos/account";
@@ -484,6 +486,17 @@ async function quoteLegs(
 export async function quoteBuy(c: Ctx, id: string, amountUsd: number, taker: string) {
   const b = basket(id);
   if (amountUsd < MIN_USD) throw new HttpError(400, "below_minimum", { minUsd: MIN_USD });
+  // Check the wallet up front: otherwise every leg quotes fine and the last ones fail at execute.
+  const usdc = await connection(c.env)
+    .getTokenAccountBalance(ata(new PublicKey(taker), new PublicKey(USDC_MINT)))
+    .catch(() => null);
+  const heldUsd = Number(usdc?.value.uiAmount ?? 0);
+  if (heldUsd < amountUsd)
+    throw new HttpError(400, "insufficient_usdc", {
+      neededUsd: amountUsd,
+      heldUsd,
+      shortUsd: Math.ceil((amountUsd - heldUsd) * 100) / 100,
+    });
   const stocks = (await resolve(c.sql))(b);
   if (!stocks.length) throw new HttpError(409, "basket_unavailable");
   const each = BigInt(Math.floor((amountUsd * 1e6) / stocks.length));
