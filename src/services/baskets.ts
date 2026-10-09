@@ -11,6 +11,8 @@ import { shapeStock, marketOpen, tradable } from "./shape";
 import { quote, submit } from "./swap";
 import { news } from "./news";
 import { sparks, type Spark } from "./spark";
+import { BENCHMARK, pnlCard, costBasis, pnlPct } from "./pnl";
+import { walletRepo } from "../repos/wallet";
 
 // Ready-made baskets, equal weight. Stocks are real-world tickers so each resolves to its deepest token at request
 // time. `private` ones have no exchange closes; their chart comes from our own price snapshots.
@@ -165,14 +167,12 @@ const RISK_NOTES = [
 ];
 const PRIVATE_NOTE = "Pre-IPO tokens trade above the last private valuation and can swing hard.";
 const RANGES = { "1M": 30, "3M": 91, "6M": 182, "1Y": 365 } as const;
-const BENCHMARK = "SPY";
 
 const MIN_USD = 10;
 const YEAR_S = 366 * 86400;
 const QUOTE_CONCURRENCY = 2; // Jupiter rate-limits a burst of quotes
 const now = () => Math.floor(Date.now() / 1000);
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const pct = (n: number) => `${n >= 0 ? "+" : ""}${n}%`;
 const day = (t: number) =>
   new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
@@ -393,7 +393,7 @@ export async function basketPositions(sql: Sql, userId: string) {
   const held = holdings(legs);
   const mints = [...new Set([...held.values()].flatMap((m) => [...m.keys()]))];
   const [found, sp] = mints.length
-    ? await Promise.all([stocksRepo.byMints(sql, mints), sparks(sql, mints)])
+    ? await Promise.all([walletRepo.known(sql, mints), sparks(sql, mints)]) // held: excluded or not
     : [[], new Map<string, Spark>()];
   const rows = new Map(found.map((r) => [r.mint, r]));
   const positions = [...held].flatMap(([basketId, m]) => {
@@ -404,7 +404,7 @@ export async function basketPositions(sql: Sql, userId: string) {
       const stock = {
         mint,
         symbol: r?.symbol ?? null,
-        logo: r?.logo ?? null,
+        logo: r?.image ?? null,
         amount,
         valueUsd: round2(amount * Number(r?.price_usd ?? 0)),
       };
@@ -451,80 +451,61 @@ export async function basketPnl(sql: Sql, user: UserRow, orderId: string) {
   const [o] = await basketsRepo.order(sql, orderId, user.id);
   if (!o) throw notFound("basket order");
   if (o.side !== "sell") throw new HttpError(409, "not_a_sell");
-  const [all, legStatus] = await Promise.all([
-    basketsRepo.legs(sql, user.id),
+  const [fills, legStatus] = await Promise.all([
+    walletRepo.fills(sql, o.wallet),
     basketsRepo.orderLegs(sql, orderId),
   ]);
-  const legs = all.filter((l) => l.basket_id === o.basket_id && l.wallet === o.wallet);
-  const at = legs.findIndex((l) => l.order_id === orderId);
-  if (at < 0) throw new HttpError(409, "sell_not_confirmed");
-  const held = holdings(legs.slice(0, at)).get(o.basket_id);
-  const parts = legs
-    .filter((l) => l.order_id === orderId)
-    .flatMap((l) => {
-      const h = held?.get(l.input_mint);
-      if (!h) return [];
-      const paid = (h.cost * Number(l.in_raw)) / Number(h.bought);
-      const received = Number(l.out_raw ?? 0) / 1e6;
-      return [{ mint: l.input_mint, paid, received, opened: h.opened }];
-    });
+  const ids = new Set(legStatus.map((l) => l.id));
+  const basis = costBasis(fills);
+  const parts = fills.flatMap((f) => {
+    const b = ids.has(f.id) ? basis.get(f.id) : null;
+    return b
+      ? [
+          {
+            mint: f.input_mint,
+            paid: b.paid,
+            received: Number(f.out_raw ?? 0) / 1e6,
+            opened: b.opened,
+            at: Number(f.created_at),
+          },
+        ]
+      : [];
+  });
   if (!parts.length) throw new HttpError(409, "sell_not_confirmed");
-  const closedAt = Number(legs[at]!.created_at);
-  const openedAt = Math.min(...parts.map((x) => x.opened));
-  const [rows, spyOpen, spyClose] = await Promise.all([
-    stocksRepo.byMints(
-      sql,
-      parts.map((x) => x.mint),
-    ),
-    basketsRepo.priceAt(sql, BENCHMARK, openedAt),
-    basketsRepo.priceAt(sql, BENCHMARK, closedAt),
-  ]);
-  const meta = new Map(rows.map((r) => [r.mint, r]));
-  const paidUsd = round2(parts.reduce((s, x) => s + x.paid, 0));
-  const receivedUsd = round2(parts.reduce((s, x) => s + x.received, 0));
-  const pnlPct = paidUsd ? round2((receivedUsd / paidUsd - 1) * 100) : null;
-  const spPct = spyOpen && spyClose ? round2((spyClose / spyOpen - 1) * 100) : null;
+  const meta = new Map(
+    (
+      await walletRepo.known(
+        sql,
+        parts.map((x) => x.mint),
+      )
+    ).map((r) => [r.mint, r]),
+  );
   const stocks = parts
     .map((x) => ({
       mint: x.mint,
       symbol: meta.get(x.mint)?.symbol ?? null,
-      logo: meta.get(x.mint)?.logo ?? null,
+      logo: meta.get(x.mint)?.image ?? null,
       paidUsd: round2(x.paid),
       receivedUsd: round2(x.received),
-      pnlPct: x.paid ? round2((x.received / x.paid - 1) * 100) : null,
+      pnlPct: pnlPct(x.paid, x.received),
     }))
     .sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
   const name = basket(o.basket_id).name;
-  const heldS = closedAt - openedAt;
-  const span =
-    heldS < 3600
-      ? `${Math.max(1, Math.round(heldS / 60))}m`
-      : heldS < 86400
-        ? `${Math.round(heldS / 3600)}h`
-        : `${Math.round(heldS / 86400)}d`;
+  const c = await pnlCard(sql, user, name.toLowerCase(), {
+    paid: parts.reduce((s, x) => s + x.paid, 0),
+    received: parts.reduce((s, x) => s + x.received, 0),
+    openedAt: Math.min(...parts.map((x) => x.opened)),
+    closedAt: Math.min(...parts.map((x) => x.at)),
+  });
   return {
     orderId,
     basketId: o.basket_id,
     name,
     complete: legStatus.every((l) => l.status === "confirmed"), // false while a leg is still landing: card may move
-    paidUsd,
-    receivedUsd,
-    pnlUsd: round2(receivedUsd - paidUsd),
-    pnlPct,
-    openedAt,
-    closedAt,
-    heldSeconds: heldS,
-    benchmark: { name: "S&P 500", ticker: BENCHMARK, pnlPct: spPct },
+    ...c,
     best: stocks[0] ?? null,
     worst: stocks.length > 1 ? stocks.at(-1)! : null,
     stocks,
-    share: {
-      link: `https://stonks247.fun/i/${user.referral_code}`,
-      text:
-        pnlPct == null
-          ? `closed my ${name.toLowerCase()} basket on stonks247`
-          : `${pct(pnlPct)} on ${name.toLowerCase()} in ${span}${spPct == null ? "" : `, s&p did ${pct(spPct)}`}. stonks247`,
-    },
   };
 }
 

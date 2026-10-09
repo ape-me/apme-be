@@ -4,9 +4,11 @@ import { walletRepo } from "../repos/wallet";
 import type { SwapActivityRow, KnownRow } from "../repos/wallet";
 import type { Activity } from "../contract";
 import { USDC_MINT } from "../lib/rpc";
+import { costBasis, pnlPct } from "./pnl";
 
 export type Act = z.infer<typeof Activity>;
 export type Meta = Map<string, KnownRow>;
+export type Basis = ReturnType<typeof costBasis>;
 
 export const USDC_LOGO =
   "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png";
@@ -15,11 +17,12 @@ const round = (v: number | null | undefined, d = 2) =>
   v == null || !Number.isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d;
 
 // Two sources, one shape: our swaps carry a status, chain transfers are settled.
-export function swapAct(r: SwapActivityRow, meta: Meta): Act {
+export function swapAct(r: SwapActivityRow, meta: Meta, basis: Basis): Act {
   const tokenMint = r.side === "buy" ? r.output_mint : r.input_mint;
   const tm = meta.get(tokenMint);
   const decimals = tm?.decimals ?? 6;
   const tokenRaw = r.side === "buy" ? r.out_raw : r.in_raw;
+  const b = basis.get(r.id); // only sells have one
   return {
     sig: r.signature,
     ts: Number(r.confirmed_at ?? r.created_at),
@@ -36,6 +39,9 @@ export function swapAct(r: SwapActivityRow, meta: Meta): Act {
     feeUsd: round(r.fee_usd),
     from: null,
     error: r.error,
+    requestId: r.id,
+    basketOrderId: r.basket_order_id,
+    pnlPct: b && r.status === "confirmed" ? pnlPct(b.paid, Number(r.out_raw ?? 0) / 1e6) : null,
   };
 }
 
@@ -52,6 +58,9 @@ export function depositAct(d: {
     type: d.direction === "in" ? "deposit" : "withdraw",
     status: "confirmed",
     source: "chain",
+    requestId: null,
+    basketOrderId: null,
+    pnlPct: null,
     side: null,
     mint: USDC_MINT,
     symbol: "USDC",
@@ -99,12 +108,14 @@ export async function activityPage(sql: Sql, address: string, q: ActivityQuery) 
     before: cur?.ts ?? null,
     limit: q.limit + 1,
   };
-  const [swaps, deposits] = await Promise.all([
+  const [swaps, deposits, fills] = await Promise.all([
     wantTrades ? walletRepo.swapPage(sql, page) : [],
     wantDeposits
       ? walletRepo.depositPage(sql, { ...page, directions: directions.length ? directions : ["in", "out"] })
       : [],
+    wantTrades ? walletRepo.fills(sql, address) : [],
   ]);
+  const basis = costBasis(fills);
   const mints = [...new Set(swaps.map((r) => (r.side === "buy" ? r.output_mint : r.input_mint)))].filter(
     (m) => m !== USDC_MINT,
   );
@@ -115,7 +126,7 @@ export async function activityPage(sql: Sql, address: string, q: ActivityQuery) 
   const all: Act[] = [];
   for (const r of swaps) {
     if (r.signature) seen.add(r.signature);
-    all.push(swapAct(r, meta));
+    all.push(swapAct(r, meta, basis));
   }
   for (const d of deposits)
     if (!seen.has(d.signature)) {

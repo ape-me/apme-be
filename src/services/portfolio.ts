@@ -7,6 +7,7 @@ import { txStatus } from "./swap";
 import { swapAct, depositAct, USDC_LOGO, type Act } from "./activity";
 import { PublicKey } from "@solana/web3.js";
 import { sparks } from "./spark";
+import { costBasis } from "./pnl";
 import type { WalletResponse } from "../contract";
 import type { z } from "zod";
 
@@ -24,12 +25,13 @@ export async function wallet(
   activityLimit: number,
 ): Promise<z.infer<typeof WalletResponse>> {
   const usdcAta = ata(new PublicKey(address), new PublicKey(USDC_MINT)).toBase58();
-  const [{ sol, tokens }, solUsdPrice, swapPositions, swapRows, transfers] = await Promise.all([
+  const [{ sol, tokens }, solUsdPrice, swapPositions, swapRows, transfers, fills] = await Promise.all([
     balances(env, address),
     solPrice(),
     walletRepo.swapPositions(sql, address),
     walletRepo.swapActivity(sql, address, activityLimit),
     usdcTransfers(env, usdcAta).catch(() => []),
+    walletRepo.fills(sql, address),
   ]);
   if (transfers.length) await walletRepo.saveDeposits(sql, address, transfers).catch(() => {});
   // Rows still "submitted" only flip when /v1/tx is polled; settle them here so pendingSwaps is honest.
@@ -186,10 +188,11 @@ export async function wallet(
 
   // Activity: our swaps first (they carry status), then chain deposits. De-duped by signature.
   const seen = new Set<string>();
+  const sells = costBasis(fills);
   const activity: Act[] = [];
   let pendingSwaps = 0;
   for (const r of swapRows) {
-    const a = swapAct(r, meta);
+    const a = swapAct(r, meta, sells);
     if (a.status === "pending") pendingSwaps++;
     if (r.signature) seen.add(r.signature);
     activity.push(a);

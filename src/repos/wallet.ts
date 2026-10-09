@@ -47,6 +47,18 @@ export type SwapActivityRow = {
   out_usd: number | null;
   fee_usd: number | null;
   symbol: string | null;
+  basket_order_id: string | null;
+};
+export type FillRow = {
+  id: string;
+  side: "buy" | "sell";
+  input_mint: string;
+  output_mint: string;
+  in_raw: string;
+  out_raw: string | null;
+  in_usd: number | null;
+  created_at: string;
+  basket_id: string | null;
 };
 
 export const walletRepo = {
@@ -57,8 +69,14 @@ export const walletRepo = {
       UNION ALL
       SELECT input_mint, 0, in_raw, 0, out_usd, coalesce(fee_usd,0) + coalesce(issuer_fee_usd,0) FROM swaps WHERE wallet = ${wallet} AND status = 'confirmed' AND side = 'sell') x GROUP BY mint`,
   swapActivity: (sql: Sql, wallet: string, limit: number) => sql<SwapActivityRow[]>`
-    SELECT id, signature, side, status, error, created_at, confirmed_at, input_mint, output_mint, in_raw::text AS in_raw, out_raw::text AS out_raw, in_usd, out_usd, fee_usd, symbol
+    SELECT id, signature, side, status, error, created_at, confirmed_at, input_mint, output_mint, in_raw::text AS in_raw, out_raw::text AS out_raw, in_usd, out_usd, fee_usd, symbol, basket_order_id
     FROM swaps WHERE wallet = ${wallet} AND status <> 'quoted' ORDER BY created_at DESC LIMIT ${limit}`,
+  // Every settled swap, oldest first, tagged with its basket: the ledger cost basis is walked from.
+  fills: (sql: Sql, wallet: string) => sql<FillRow[]>`
+    SELECT s.id, s.side, s.input_mint, s.output_mint, s.in_raw::text AS in_raw, s.out_raw::text AS out_raw, s.in_usd,
+           s.created_at, o.basket_id
+    FROM swaps s LEFT JOIN basket_orders o ON o.id = s.basket_order_id
+    WHERE s.wallet = ${wallet} AND s.status = 'confirmed' ORDER BY s.created_at, s.id`,
   saveDeposits: (
     sql: Sql,
     wallet: string,
@@ -77,7 +95,7 @@ export const walletRepo = {
   // One page of history. Each source is asked for the same window so the caller can merge and cut cleanly.
   swapPage: (sql: Sql, a: Page) => sql<SwapActivityRow[]>`
     SELECT id, signature, side, status, error, created_at, confirmed_at, input_mint, output_mint,
-           in_raw::text AS in_raw, out_raw::text AS out_raw, in_usd, out_usd, fee_usd, symbol
+           in_raw::text AS in_raw, out_raw::text AS out_raw, in_usd, out_usd, fee_usd, symbol, basket_order_id
     FROM swaps WHERE wallet = ${a.wallet} AND status <> 'quoted'
       ${a.sides.length ? sql`AND side IN ${sql(a.sides)}` : sql``}
       ${a.mint ? sql`AND (input_mint = ${a.mint} OR output_mint = ${a.mint})` : sql``}

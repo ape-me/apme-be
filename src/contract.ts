@@ -122,6 +122,9 @@ export const Activity = z.object({
   feeUsd: z.number().nullable(),
   from: z.string().nullable(),
   error: z.string().nullable(),
+  requestId: z.string().nullable(), // our swap id: GET /v1/me/swaps/:requestId/pnl for a sell's card
+  basketOrderId: z.string().nullable(), // set on basket legs: GET /v1/me/baskets/orders/:id/pnl
+  pnlPct: z.number().nullable(), // confirmed sells only, average cost of the units sold
 });
 export const WalletResponse = z.object({
   address: z.string(),

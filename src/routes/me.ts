@@ -23,6 +23,7 @@ import {
 import { accountRepo } from "../repos/account";
 import { catalog } from "../services/catalog";
 import { basketPositions, basketPnl } from "../services/baskets";
+import { swapPnl } from "../services/pnl";
 
 const shapeMe = (
   c: { env: Env },
@@ -103,6 +104,10 @@ me.post("/referrals/claim", async (c) =>
 me.get("/baskets", async (c) => c.json(await basketPositions(c.get("sql"), c.get("user").id)));
 me.get("/baskets/orders/:orderId/pnl", async (c) =>
   c.json(await basketPnl(c.get("sql"), c.get("user"), parse(z.string().uuid(), c.req.param("orderId")))),
+);
+
+me.get("/swaps/:requestId/pnl", async (c) =>
+  c.json(await swapPnl(c.get("sql"), c.get("user"), parse(z.string().uuid(), c.req.param("requestId")))),
 );
 
 me.get("/settings", (c) => c.json(shapeSettings(c.get("settings"))));
