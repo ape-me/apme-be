@@ -317,7 +317,14 @@ export async function basketDetail(sql: Sql, id: string) {
       ? {
           ranges: ranges(bt.points),
           benchmark: bench
-            ? { name: "S&P 500", ticker: BENCHMARK, ranges: ranges(bench.points), points: bench.points }
+            ? {
+                name: "S&P 500",
+                ticker: BENCHMARK,
+                returnPct: bench.returnPct,
+                returnLabel: bench.returnLabel,
+                ranges: ranges(bench.points),
+                points: bench.points,
+              }
             : null,
         }
       : null,
