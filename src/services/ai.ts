@@ -10,6 +10,7 @@ import { basketsRepo } from "../repos/baskets";
 import type { StockRow } from "../repos/stocks";
 import { DRAFT_S, basketDetail, closeKey, universe, type BasketPick } from "./baskets";
 import { news } from "./news";
+import { tradable } from "./shape";
 
 // AI baskets: Sonnet shortlists from everything we list, code drops what trades badly, Sonnet weighs the rest
 // against their recent news (scored by Jev). Haiku writes the idea chips.
@@ -110,10 +111,11 @@ async function ask<T>(
   return r.parsed_output as T | null;
 }
 
-// Only what trades well enough to put real money in: a deep pool (Ondo fills at the real price) and a price close to
+// Only what trades well enough to put real money in, right now: a deep pool (Ondo fills at the real price) and a price close to
 // the real stock's (pre-IPO tokens run above their last round, so they get more room).
 const pickable = (r: StockRow) =>
   !r.halted &&
+  tradable(r) && // a weekend or holiday basket leaves out Ondo names that cannot fill until the next session
   (r.issuer === "ondo" || Number(r.liquidity_usd ?? 0) >= MIN_POOL_USD) &&
   Math.abs(Number(r.premium_pct ?? 0)) <= (r.category === "preipo" ? 10 : 3);
 

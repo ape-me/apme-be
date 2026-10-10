@@ -14,6 +14,9 @@ const newYork = (now: Date) =>
   new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "numeric",
     minute: "numeric",
     hour12: false,
@@ -32,18 +35,43 @@ export function marketSession(now = new Date()): Session {
 }
 export const marketOpen = (now = new Date()) => marketSession(now) === "open";
 
-// Ondo mints and redeems Sunday 8pm to Friday 8pm ET; its 24/7 names (tagged "247") never close.
-export function ondoOpen(now = new Date()): boolean {
-  const p = newYork(now);
-  const m = (Number(p.hour) % 24) * 60 + Number(p.minute);
-  if (p.weekday === "Sat") return false;
-  if (p.weekday === "Sun") return m >= 1200;
-  if (p.weekday === "Fri") return m < 1200;
-  return true;
+// NYSE full-day closures. Ondo pauses for "special closures in underlying markets": we treat these like a weekend day.
+const HOLIDAYS = new Set([
+  "2026-11-26",
+  "2026-12-25",
+  "2027-01-01",
+  "2027-01-18",
+  "2027-02-15",
+  "2027-03-26",
+  "2027-05-31",
+  "2027-06-18",
+  "2027-07-05",
+  "2027-09-06",
+  "2027-11-25",
+  "2027-12-24",
+]);
+// Ondo mints and redeems Sunday 8pm to Friday 8pm ET: each trading day's session opens at 8pm ET the evening before.
+// Its 24/7 names (tagged "247") never close.
+function ondoOpen(now: Date) {
+  const p = newYork(new Date(now.getTime() + 4 * 3600_000));
+  return p.weekday !== "Sat" && p.weekday !== "Sun" && !HOLIDAYS.has(`${p.year}-${p.month}-${p.day}`);
 }
+const ondo24x5 = (r: { issuer: string; tags: string[] | string }) =>
+  r.issuer === "ondo" && !pgArr(r.tags).includes("247");
 // Whether a Buy on this row can fill right now. Pools trade around the clock; Ondo keeps hours.
 export const tradable = (r: { issuer: string; tags: string[] | string }, now = new Date()) =>
-  r.issuer !== "ondo" || pgArr(r.tags).includes("247") || ondoOpen(now);
+  !ondo24x5(r) || ondoOpen(now);
+// When Ondo next opens (unix seconds), found by the half hour and kept for that half hour.
+let opens = { bucket: 0, at: 0 };
+export function ondoOpensAt(now = new Date()) {
+  const bucket = Math.ceil(now.getTime() / 1_800_000) * 1_800_000;
+  if (opens.bucket !== bucket) {
+    let t = bucket;
+    while (!ondoOpen(new Date(t))) t += 1_800_000;
+    opens = { bucket, at: t / 1000 };
+  }
+  return opens.at;
+}
 
 export const shapeStock = (r: StockRow, open = marketOpen(), s?: Spark): Stock => ({
   tags: [...new Set([...pgArr(r.tags), ...tagsFor(r)])], // operator/indexer tags (crypto groups) plus every collection it falls in
@@ -58,6 +86,8 @@ export const shapeStock = (r: StockRow, open = marketOpen(), s?: Spark): Stock =
   change24h: num(r.change_24h),
   marketOpen: open,
   tradable: tradable(r),
+  hours: ondo24x5(r) ? "24/5" : "24/7",
+  opensAt: tradable(r) ? null : ondoOpensAt(),
   halted: r.halted ?? false,
   decimals: int(r.decimals),
   multiplier: Number(r.multiplier ?? 1),
