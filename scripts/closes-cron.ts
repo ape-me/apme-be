@@ -86,3 +86,4 @@ for (const r of rows) {
 }
 console.log(new Date().toISOString(), JSON.stringify(out));
 await sql.end({ timeout: 2 });
+process.exit(0); // idle keep-alive sockets would hold the run open
