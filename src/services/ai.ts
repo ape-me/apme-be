@@ -253,7 +253,7 @@ export async function ideaChips(env: Env, sql: Sql) {
         model: HAIKU,
         effort: "low",
         system:
-          'From today\'s market headlines, write 4 investing ideas someone could turn into a basket of stocks. Each 3 to 7 plain words, sentence case, no tickers, no hype, e.g. "AI needs way more power". Cover 4 different themes.',
+          'From today\'s market headlines, write 4 ideas someone might want to invest in, each a theme to buy a basket of stocks for. Each 3 to 6 plain words, sentence case, no tickers, no hype, an upbeat bet rather than a warning, e.g. "AI needs way more power" or "Gold keeps climbing". Cover 4 different themes.',
         content: titles,
         schema: Ideas,
       }).catch(() => null)
