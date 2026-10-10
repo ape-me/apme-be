@@ -42,11 +42,11 @@ type Stock = {
   issuer: string;
   underlying: string | null;
   pooled: boolean;
+  category: string;
 };
-// Ondo-only names are mostly smaller companies and ETFs whose first word is generic ("Global", "iShares", "Trump"),
-// so they match on the full name without its corporate suffix, never on the first word alone.
+// Names match without their corporate suffix: "Coinbase Global, Inc." is written "Coinbase Global".
 const SUFFIX =
-  /^the\s+|[\s,]+(inc|incorporated|corp|corporation|company|co|holdings?|ltd|limited|plc|group|n\.?v|s\.?a|class [a-z]|etf|trust|fund)\.?$/i;
+  /^the\s+|\s+(and|&)$|[\s,]+(inc|incorporated|corp|corporation|company|co|holdings?|ltd|limited|plc|group|n\.?v|s\.?a|class [a-z]|etf|trust|fund)\.?$/i;
 const bareName = (name: string) => {
   let n = name.trim();
   for (let prev = ""; prev !== n;) [prev, n] = [n, n.replace(SUFFIX, "").trim()];
@@ -68,35 +68,65 @@ const AMBIGUOUS_TICKERS = new Set([
   "WS",
   "FN",
 ]);
-// Names that headlines use for something else even when capitalised ("Settlers Block", "Williams F1"): ticker only.
+// Words that headlines use for something else even when capitalised ("Settlers Block", "Rocket attack"): never a match alone.
 const AMBIGUOUS_NAMES = new Set([
+  "Advanced",
   "Block",
+  "Bloom",
   "Bullish",
+  "Circle",
+  "Dutch",
+  "Firefly",
   "Flex",
+  "Forward",
   "Grab",
+  "Johnson",
   "Nova",
+  "Quantum",
+  "Rocket",
+  "Snap",
   "Southern",
+  "Sphere",
+  "Strategy",
+  "Trump",
   "Westlake",
   "Williams",
 ]);
-const matcher = (s: Stock) => {
-  const first = s.name.split(/[\s,.]+/)[0]!;
-  const names = (s.pooled ? [s.name, first] : [bareName(s.name)]).filter(
-    (x) => x.length > 3 && (s.pooled || !AMBIGUOUS_NAMES.has(x)),
+// One headline test per stock. A pooled company also matches on its first word ("Micron"), but only when no other
+// listed name starts with it ("Global" is 17 funds, "United" 11 companies), never for a fund, and only capitalised.
+const matchers = (stocks: Stock[]) => {
+  const firstOf = (s: Stock) => bareName(s.name).split(/[\s,.]+/)[0]!;
+  const uses = new Map<string, number>();
+  for (const s of stocks) uses.set(firstOf(s), (uses.get(firstOf(s)) ?? 0) + 1);
+  return new Map(
+    stocks.map((s) => {
+      const first = firstOf(s);
+      const full = bareName(s.name);
+      const byName =
+        full.length > 3 && (s.pooled || !AMBIGUOUS_NAMES.has(full))
+          ? new RegExp(`\\b${esc(full)}\\b`, !s.pooled && !/\s/.test(full) ? "" : "i") // one-word names: capitalised only
+          : null;
+      const byFirst =
+        s.pooled &&
+        s.category !== "etf" &&
+        first.length > 3 &&
+        uses.get(first) === 1 &&
+        !AMBIGUOUS_NAMES.has(first)
+          ? new RegExp(`\\b${esc(first)}\\b`)
+          : null;
+      const t = tickerOf(s);
+      const byTicker =
+        t && t.length > 1
+          ? new RegExp(
+              !s.pooled && AMBIGUOUS_TICKERS.has(t) ? `(\\$${esc(t)}\\b|\\(${esc(t)}\\))` : `\\b${esc(t)}\\b`,
+            )
+          : null;
+      return [
+        s.mint,
+        (title: string) => !!(byName?.test(title) || byFirst?.test(title) || byTicker?.test(title)),
+      ];
+    }),
   );
-  // A one-word name like Block, Visa or Bullish is also an everyday word: only the capitalised form counts.
-  const exactCase = !s.pooled && names.length === 1 && !/\s/.test(names[0]!);
-  const byName = names.length
-    ? new RegExp(`\\b(${names.map(esc).join("|")})\\b`, exactCase ? "" : "i")
-    : null;
-  const t = tickerOf(s);
-  const byTicker =
-    t && t.length > 1
-      ? new RegExp(
-          !s.pooled && AMBIGUOUS_TICKERS.has(t) ? `(\\$${esc(t)}\\b|\\(${esc(t)}\\))` : `\\b${esc(t)}\\b`,
-        )
-      : null;
-  return (title: string) => !!(byName?.test(title) || byTicker?.test(title));
 };
 
 type Raw = {
@@ -404,7 +434,8 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
   const t = Math.floor(Date.now() / 1000);
   const fresh: z.infer<typeof IngestNews>[] = [];
   let added = 0;
-  const feeds = await ingestFeeds(sql, stocks, t);
+  const hits = matchers(stocks);
+  const feeds = await ingestFeeds(sql, stocks, hits, t);
   fresh.push(...feeds.fresh);
   added += feeds.added;
   for (const s of slice) {
@@ -413,7 +444,7 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
     if (!raws.length) raws = await google(s.name);
     const seen = new Set<string>();
     const recent = await newsRepo.recentTitles(sql, s.mint, t - 2 * 86400);
-    const hit = matcher(s);
+    const hit = hits.get(s.mint)!;
     let fetched = 0;
     for (const n of raws.sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 12)) {
       const title = text(n.title);
@@ -468,8 +499,8 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
 // Outlet feeds: every headline is matched against the whole catalog; the ones about no company but about the
 // market itself are kept under scope "market". At most `MAX_NEW` article pages are opened per run for a picture.
 const MAX_NEW = 40;
-async function ingestFeeds(sql: Sql, stocks: Stock[], t: number) {
-  const hits = stocks.map((s) => ({ s, hit: matcher(s) }));
+async function ingestFeeds(sql: Sql, stocks: Stock[], matchOf: ReturnType<typeof matchers>, t: number) {
+  const hits = stocks.map((s) => ({ s, hit: matchOf.get(s.mint)! }));
   const feeds = await Promise.all(FEEDS.map((f) => outletFeed(f).catch(() => [])));
   const items = feeds
     .flat()

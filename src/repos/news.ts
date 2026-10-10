@@ -144,8 +144,9 @@ export const newsRepo = {
         issuer: string;
         underlying: string | null;
         pooled: boolean;
+        category: string;
       }[]
-    >`SELECT DISTINCT ON (coalesce(underlying, mint)) mint, symbol, name, issuer, underlying,
+    >`SELECT DISTINCT ON (coalesce(underlying, mint)) mint, symbol, name, issuer, underlying, category,
              coalesce(liquidity_usd, 0) >= 5000 AS pooled
         FROM stocks
         WHERE NOT excluded AND price_usd IS NOT NULL AND category IN ('stock', 'etf', 'preipo')
