@@ -34,12 +34,16 @@ async function yahoo(t: string) {
   return { days, usd: c?.meta.currency === "USD" };
 }
 
-const geckoGet = async (path: string) => {
-  await sleep(2100); // free tier: ~30 calls a minute
-  return (await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/${path}`)).json() as Promise<{
-    data?: unknown;
-  }>;
-};
+// Free tier: ~30 calls a minute, so calls are spaced out and a 429 waits for the window to clear.
+async function geckoGet(path: string, tries = 3): Promise<{ data?: unknown }> {
+  await sleep(3000);
+  const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/${path}`);
+  if (r.status === 429 && tries > 1) {
+    await sleep(30_000);
+    return geckoGet(path, tries - 1);
+  }
+  return r.json() as Promise<{ data?: unknown }>;
+}
 
 // The token's deepest Solana pool, a year of daily candles priced in USD, oldest first.
 async function gecko(mint: string): Promise<Day[]> {
