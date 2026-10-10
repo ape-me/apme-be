@@ -505,7 +505,7 @@ export async function basketPnl(sql: Sql, user: UserRow, orderId: string) {
     }))
     .sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
   const name = basket(o.basket_id).name;
-  const c = await pnlCard(sql, user, name.toLowerCase(), {
+  const c = await pnlCard(sql, user, name.toLowerCase(), parts, {
     paid: parts.reduce((s, x) => s + x.paid, 0),
     received: parts.reduce((s, x) => s + x.received, 0),
     openedAt: Math.min(...parts.map((x) => x.opened)),

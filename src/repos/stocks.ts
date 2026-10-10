@@ -73,6 +73,22 @@ export const stocksRepo = {
       WHERE s.mint = m.mint AND s.ts <= ${t} - (24 - h.i) * 3600 AND s.ts > ${t - 25 * 3600} AND s.price_usd IS NOT NULL
       ORDER BY s.ts DESC LIMIT 1) p ON true
     GROUP BY m.mint`,
+  // Last price at marks `from`, `from + step`, ... up to `to` (capped there), for the mints and the benchmark's
+  // deepest token (`bench`). csv as in `hourly`.
+  line: (sql: Sql, mints: string[], bench: string, from: number, to: number, step: number) =>
+    sql<{ mint: string; bench: boolean; points: string }[]>`
+    SELECT m.mint, m.bench, string_agg(coalesce(p.price_usd::text, ''), ',' ORDER BY h.i) AS points
+    FROM (SELECT mint, mint = (SELECT mint FROM stocks WHERE coalesce(underlying, symbol) = ${bench} AND NOT excluded
+            ORDER BY coalesce(liquidity_usd, 0) DESC LIMIT 1) AS bench
+          FROM stocks) m
+    CROSS JOIN generate_series(0, ceil((${to}::bigint - ${from}::bigint) / ${step}::numeric)::int) h(i)
+    LEFT JOIN LATERAL (
+      SELECT price_usd FROM stock_snapshots s
+      WHERE s.mint = m.mint AND s.price_usd IS NOT NULL AND s.ts <= least(${from}::bigint + h.i * ${step}::bigint, ${to}::bigint)
+        AND s.ts > least(${from}::bigint + h.i * ${step}::bigint, ${to}::bigint) - 86400
+      ORDER BY s.ts DESC LIMIT 1) p ON true
+    WHERE m.mint IN ${sql(mints)} OR m.bench
+    GROUP BY m.mint, m.bench`,
   withConfig: (
     sql: Sql,
   ) => sql`SELECT s.mint, s.symbol, s.issuer, s.category, s.excluded, s.tags, c.note, c.updated_at

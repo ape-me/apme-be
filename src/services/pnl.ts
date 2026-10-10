@@ -4,6 +4,7 @@ import { swapsRepo } from "../repos/swaps";
 import { HttpError, notFound } from "../lib/errors";
 import type { UserRow } from "../repos/account";
 import { basketsRepo } from "../repos/baskets";
+import { stocksRepo } from "../repos/stocks";
 
 type Basis = { paid: number; opened: number };
 export const BENCHMARK = "SPY";
@@ -48,16 +49,66 @@ export function costBasis(fills: FillRow[]) {
 
 export const pnlPct = (paid: number, received: number) => (paid ? round2((received / paid - 1) * 100) : null);
 
+type Point = { t: number; value: number };
+// A csv price line; gaps carry the previous price forward.
+const series = (points: string) => {
+  let last: number | null = null;
+  return points.split(",").map((x) => (last = x === "" ? last : Number(x)));
+};
+
+// The position over the hold, weighted by what each leg paid, and the S&P 500 on the same marks, both from 100 at
+// the first mark every leg has a price. ~60 marks, whole minutes apart (whole hours past 60h). The last point is the
+// real exit, so the line ends where the card's P/L does. Null under 2 minutes or with no snapshots in the hold.
+async function holdLine(
+  sql: Sql,
+  legs: { mint: string; paid: number }[],
+  a: { paid: number; received: number; openedAt: number; closedAt: number },
+) {
+  const held = a.closedAt - a.openedAt;
+  if (held < 120) return null;
+  const unit = held < 60 * 3600 ? 60 : 3600;
+  const step = Math.max(1, Math.round(held / 60 / unit)) * unit;
+  const rows = await stocksRepo.line(
+    sql,
+    [...new Set(legs.map((l) => l.mint))],
+    BENCHMARK,
+    a.openedAt,
+    a.closedAt,
+    step,
+  );
+  const by = new Map(rows.map((r) => [r.mint, series(r.points)]));
+  const bench = rows.find((r) => r.bench);
+  const n = rows[0] ? rows[0].points.split(",").length : 0;
+  const start = [...Array(n).keys()].find((i) => legs.every((l) => by.get(l.mint)?.[i]));
+  if (start == null || start === n - 1) return null;
+  const b = bench && series(bench.points);
+  const marks = [...Array(n).keys()].slice(start);
+  const t = (i: number) => Math.min(a.openedAt + i * step, a.closedAt);
+  const points: Point[] = marks.map((i) => ({
+    t: t(i),
+    value: round2(
+      legs.reduce((s, l) => s + (l.paid / a.paid) * (by.get(l.mint)![i]! / by.get(l.mint)![start]!), 0) * 100,
+    ),
+  }));
+  points[points.length - 1]!.value = round2((a.received / a.paid) * 100);
+  return {
+    points,
+    benchmark: b?.[start] ? marks.map((i) => ({ t: t(i), value: round2((b[i]! / b[start]!) * 100) })) : null,
+  };
+}
+
 // The card's common half: totals, the hold, the S&P 500 over the same hold, and a share line.
 export async function pnlCard(
   sql: Sql,
   user: UserRow,
   label: string,
+  legs: { mint: string; paid: number }[],
   a: { paid: number; received: number; openedAt: number; closedAt: number },
 ) {
-  const [spOpen, spClose] = await Promise.all([
+  const [spOpen, spClose, line] = await Promise.all([
     basketsRepo.priceAt(sql, BENCHMARK, a.openedAt),
     basketsRepo.priceAt(sql, BENCHMARK, a.closedAt),
+    holdLine(sql, legs, a),
   ]);
   const paidUsd = round2(a.paid);
   const receivedUsd = round2(a.received);
@@ -72,7 +123,8 @@ export async function pnlCard(
     openedAt: a.openedAt,
     closedAt: a.closedAt,
     heldSeconds,
-    benchmark: { name: "S&P 500", ticker: BENCHMARK, pnlPct: sp },
+    points: line?.points ?? null,
+    benchmark: { name: "S&P 500", ticker: BENCHMARK, pnlPct: sp, points: line?.benchmark ?? null },
     share: {
       link: `https://stonks247.fun/i/${user.referral_code}`,
       text:
@@ -103,7 +155,7 @@ export async function swapPnl(sql: Sql, user: UserRow, requestId: string) {
     name: meta?.name ?? null,
     logo: meta?.image ?? null,
     complete: true,
-    ...(await pnlCard(sql, user, symbol, {
+    ...(await pnlCard(sql, user, symbol, [{ mint: row.input_mint, paid: b.paid }], {
       paid: b.paid,
       received: Number(row.out_raw ?? 0) / 1e6,
       openedAt: b.opened,
