@@ -30,7 +30,8 @@ const SHORTLIST = `You build stock baskets for Stonks247, an app where people bu
 The user types an investing idea. Shortlist 8 to 12 tickers from the list below that best express it: the most direct plays first, then a few second-order ones (suppliers, infrastructure, a matching ETF or coin).
 Rules:
 - Use tickers exactly as written in the list. Nothing else exists.
-- One ticker per company.
+- One ticker per company, and no two funds that track the same thing (e.g. two gold funds).
+- No leveraged or inverse funds unless the idea asks for them.
 - A bearish idea ("oil will crash") means picking what gains from it.
 - If the text is not an investing idea (gibberish, a question, a request for something else, harmful), set ok to false, candidates to [], and give 3 short example ideas in its place. Otherwise ok is true and examples is [].
 
@@ -40,7 +41,9 @@ const FINAL = `You build stock baskets for Stonks247 from a user's investing ide
 Pick 3 to 6 candidates and weight them.
 - Weights are multiples of 5, each 5 to 40, summing to 100.
 - More weight for what is closest to the idea and has strong recent news in its favour; less for side bets.
-- why: at most 12 plain words. If a news story drives the pick, cite its fact and set newsId to its id; else newsId is null.
+- No two picks that are the same bet (two funds on the same asset, a fund plus its top holding at a small weight).
+- why: at most 12 plain words, no trailing period. Say first how it fits the idea.
+- newsId: only for a story that is about this company itself and backs the idea; add its fact to why. Otherwise null. A story about a supplier, partner or an unrelated product does not count.
 - name: 1 to 3 words, catchy, no tickers. tagline: at most 8 words.
 - bearCase: one sentence, at most 25 words, the main way this basket loses money.
 - Plain English, no hype, never advice ("you should").`;
