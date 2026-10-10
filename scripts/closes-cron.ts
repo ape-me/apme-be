@@ -1,12 +1,11 @@
 // Daily closes of every listed stock, ETF and crypto token, for basket returns and charts (AI baskets can pick any of
 // them). Runs on the prod box once a day: Yahoo turns away Worker IPs. Private companies come from our own snapshots.
 import postgres from "postgres";
-import { closeKey, yahooOf } from "../src/services/baskets";
 import { basketsRepo } from "../src/repos/baskets";
-import { stocksRepo } from "../src/repos/stocks";
+import { closeKey, universe, yahooOf } from "../src/services/baskets";
 
 const sql = postgres(process.env.DATABASE_URL!, { max: 2, prepare: false, idle_timeout: 5 });
-const rows = [...(await stocksRepo.all(sql)), ...(await stocksRepo.all(sql, "crypto"))];
+const rows = await universe(sql);
 const out = { ok: 0, snapshots: 0, empty: [] as string[], mismatch: [] as string[], failed: [] as string[] };
 
 for (const r of rows) {

@@ -13,17 +13,21 @@ import { news } from "./news";
 import { sparks, type Spark } from "./spark";
 import { BENCHMARK, pnlCard, costBasis, pnlPct } from "./pnl";
 import { walletRepo } from "../repos/wallet";
+import { aiRepo, type AiBasketRow } from "../repos/ai";
 
-// Ready-made baskets, equal weight. Stocks are real-world tickers so each resolves to its deepest token at request
-// time. `private` ones have no exchange closes; their chart comes from our own price snapshots.
+// A basket: ready-made below, or built by AI from a user's idea (`ai_` ids, stored in ai_baskets). Tickers are
+// daily_closes keys (see closeKey) so each resolves to its deepest token at request time. Weights sum to 100.
+export type BasketPick = { ticker: string; weight: number; why: string; news?: PickNews | null };
+type PickNews = { id: string; title: string; source: string | null; url: string; publishedAt: number };
 type Basket = {
   id: string;
   name: string;
   tagline: string;
   description: string;
   about: readonly string[];
-  stocks: readonly { ticker: string; why: string }[];
-  private?: boolean;
+  stocks: readonly BasketPick[];
+  idea?: string;
+  bearCase?: string | null;
 };
 export const BASKETS: readonly Basket[] = [
   {
@@ -36,13 +40,13 @@ export const BASKETS: readonly Basket[] = [
       "Own all of them in one buy instead of guessing which one wins.",
     ],
     stocks: [
-      { ticker: "AAPL", why: "2 billion devices and a services business that prints cash." },
-      { ticker: "MSFT", why: "Cloud, Office and a big stake in OpenAI." },
-      { ticker: "GOOGL", why: "Search, YouTube, Google Cloud and Gemini." },
-      { ticker: "AMZN", why: "The biggest online store and AWS, the biggest cloud." },
-      { ticker: "META", why: "Facebook, Instagram and WhatsApp: 3 billion people a day." },
-      { ticker: "NVDA", why: "Makes the chips almost every AI model is trained on." },
-      { ticker: "TSLA", why: "Electric cars, batteries, robotaxis and robots." },
+      { ticker: "AAPL", weight: 15, why: "2 billion devices and a services business that prints cash." },
+      { ticker: "MSFT", weight: 20, why: "Cloud, Office and a big stake in OpenAI." },
+      { ticker: "GOOGL", weight: 15, why: "Search, YouTube, Google Cloud and Gemini." },
+      { ticker: "AMZN", weight: 15, why: "The biggest online store and AWS, the biggest cloud." },
+      { ticker: "META", weight: 10, why: "Facebook, Instagram and WhatsApp: 3 billion people a day." },
+      { ticker: "NVDA", weight: 20, why: "Makes the chips almost every AI model is trained on." },
+      { ticker: "TSLA", weight: 5, why: "Electric cars, batteries, robotaxis and robots." },
     ],
   },
   {
@@ -55,12 +59,12 @@ export const BASKETS: readonly Basket[] = [
       "Whoever wins the AI race, these companies get paid.",
     ],
     stocks: [
-      { ticker: "NVDA", why: "The leader in AI chips: most AI runs on its GPUs." },
-      { ticker: "MU", why: "US memory maker. AI servers need huge amounts of it." },
-      { ticker: "SKHY", why: "Korean memory giant, Nvidia's top supplier of AI memory." },
-      { ticker: "AMD", why: "Nvidia's main rival in AI and data center chips." },
-      { ticker: "SNDK", why: "Flash storage for all the data AI trains on and produces." },
-      { ticker: "INTC", why: "America's chip factory, a bet on a comeback." },
+      { ticker: "NVDA", weight: 30, why: "The leader in AI chips: most AI runs on its GPUs." },
+      { ticker: "MU", weight: 20, why: "US memory maker. AI servers need huge amounts of it." },
+      { ticker: "SKHY", weight: 15, why: "Korean memory giant, Nvidia's top supplier of AI memory." },
+      { ticker: "AMD", weight: 15, why: "Nvidia's main rival in AI and data center chips." },
+      { ticker: "SNDK", weight: 10, why: "Flash storage for all the data AI trains on and produces." },
+      { ticker: "INTC", weight: 10, why: "America's chip factory, a bet on a comeback." },
     ],
   },
   {
@@ -70,10 +74,10 @@ export const BASKETS: readonly Basket[] = [
     description: "Coinbase, Robinhood, Strategy and Circle: listed companies that rise and fall with crypto.",
     about: ["Listed companies whose business moves with crypto.", "Crypto exposure through regular stocks."],
     stocks: [
-      { ticker: "COIN", why: "The biggest US crypto exchange." },
-      { ticker: "HOOD", why: "The trading app millions use for stocks and crypto." },
-      { ticker: "MSTR", why: "Holds more bitcoin than any other public company." },
-      { ticker: "CRCL", why: "Issues USDC, the dollar stablecoin." },
+      { ticker: "COIN", weight: 30, why: "The biggest US crypto exchange." },
+      { ticker: "HOOD", weight: 25, why: "The trading app millions use for stocks and crypto." },
+      { ticker: "MSTR", weight: 25, why: "Holds more bitcoin than any other public company." },
+      { ticker: "CRCL", weight: 20, why: "Issues USDC, the dollar stablecoin." },
     ],
   },
   {
@@ -87,14 +91,13 @@ export const BASKETS: readonly Basket[] = [
       "Normally only VCs get in before an IPO. These tokens track their value.",
     ],
     stocks: [
-      { ticker: "OPENAI", why: "Makes ChatGPT." },
-      { ticker: "ANTHROPIC", why: "Makes Claude." },
-      { ticker: "SPACEX", why: "Reusable rockets and Starlink internet." },
-      { ticker: "ANDURIL", why: "AI-powered defense hardware." },
-      { ticker: "NEURALINK", why: "Brain-computer interface chips." },
-      { ticker: "POLYMARKET", why: "The biggest prediction market." },
+      { ticker: "OPENAI", weight: 25, why: "Makes ChatGPT." },
+      { ticker: "ANTHROPIC", weight: 25, why: "Makes Claude." },
+      { ticker: "SPACEX", weight: 20, why: "Reusable rockets and Starlink internet." },
+      { ticker: "ANDURIL", weight: 15, why: "AI-powered defense hardware." },
+      { ticker: "NEURALINK", weight: 5, why: "Brain-computer interface chips." },
+      { ticker: "POLYMARKET", weight: 10, why: "The biggest prediction market." },
     ],
-    private: true,
   },
   {
     id: "market",
@@ -106,9 +109,9 @@ export const BASKETS: readonly Basket[] = [
       "Spread across hundreds of companies, nothing to watch.",
     ],
     stocks: [
-      { ticker: "SPY", why: "The 500 biggest US companies." },
-      { ticker: "QQQ", why: "The 100 biggest Nasdaq companies, tech heavy." },
-      { ticker: "BRK.B", why: "Warren Buffett's company, owns dozens of businesses." },
+      { ticker: "SPY", weight: 50, why: "The 500 biggest US companies." },
+      { ticker: "QQQ", weight: 30, why: "The 100 biggest Nasdaq companies, tech heavy." },
+      { ticker: "BRK.B", weight: 20, why: "Warren Buffett's company, owns dozens of businesses." },
     ],
   },
   {
@@ -118,10 +121,10 @@ export const BASKETS: readonly Basket[] = [
     description: "Gold, oil, copper miners and uranium: things you can dig up or burn.",
     about: ["Things you can dig up or burn.", "They tend to hold value when money loses it."],
     stocks: [
-      { ticker: "GLD", why: "Gold, the classic safe haven." },
-      { ticker: "USO", why: "Tracks the price of oil." },
-      { ticker: "COPX", why: "Copper miners: copper goes into every wire, EV and data center." },
-      { ticker: "URA", why: "Uranium, the fuel for nuclear power." },
+      { ticker: "GLD", weight: 40, why: "Gold, the classic safe haven." },
+      { ticker: "USO", weight: 15, why: "Tracks the price of oil." },
+      { ticker: "COPX", weight: 25, why: "Copper miners: copper goes into every wire, EV and data center." },
+      { ticker: "URA", weight: 20, why: "Uranium, the fuel for nuclear power." },
     ],
   },
   {
@@ -131,11 +134,11 @@ export const BASKETS: readonly Basket[] = [
     description: "Nike, Netflix, Costco, Ferrari and Take-Two.",
     about: ["Brands people use every day.", "Real products and loyal customers all over the world."],
     stocks: [
-      { ticker: "NKE", why: "The biggest sportswear brand." },
-      { ticker: "NFLX", why: "The biggest streaming service." },
-      { ticker: "COST", why: "Members-only warehouse stores with very loyal shoppers." },
-      { ticker: "RACE", why: "Ferrari: luxury cars with a waiting list." },
-      { ticker: "TTWO", why: "Makes GTA. GTA 6 is coming." },
+      { ticker: "NKE", weight: 15, why: "The biggest sportswear brand." },
+      { ticker: "NFLX", weight: 25, why: "The biggest streaming service." },
+      { ticker: "COST", weight: 25, why: "Members-only warehouse stores with very loyal shoppers." },
+      { ticker: "RACE", weight: 15, why: "Ferrari: luxury cars with a waiting list." },
+      { ticker: "TTWO", weight: 20, why: "Makes GTA. GTA 6 is coming." },
     ],
   },
   {
@@ -145,14 +148,13 @@ export const BASKETS: readonly Basket[] = [
     description: "Palantir, GameStop, Trump Media and Hims & Hers.",
     about: ["The stocks retail traders love most.", "Big moves, both ways."],
     stocks: [
-      { ticker: "PLTR", why: "Data and AI software for governments and companies." },
-      { ticker: "GME", why: "The original meme stock." },
-      { ticker: "DJT", why: "Trump Media, owner of Truth Social." },
-      { ticker: "HIMS", why: "Online health care and weight-loss meds." },
+      { ticker: "PLTR", weight: 35, why: "Data and AI software for governments and companies." },
+      { ticker: "GME", weight: 20, why: "The original meme stock." },
+      { ticker: "DJT", weight: 20, why: "Trump Media, owner of Truth Social." },
+      { ticker: "HIMS", weight: 25, why: "Online health care and weight-loss meds." },
     ],
   },
 ];
-export const tickersOf = (b: Basket) => b.stocks.map((s) => s.ticker);
 // A token's key in daily_closes: crypto gets Yahoo's -USD suffix so SOL the coin never meets a stock called SOL.
 export const closeKey = (r: Pick<StockRow, "category" | "underlying" | "symbol">) =>
   r.category === "crypto" ? `${r.underlying ?? r.symbol}-USD` : (r.underlying ?? r.symbol);
@@ -185,6 +187,7 @@ const PRIVATE_NOTE = "Pre-IPO tokens trade above the last private valuation and 
 const RANGES = { "1M": 30, "3M": 91, "6M": 182, "1Y": 365 } as const;
 
 const MIN_USD = 10;
+const MIN_LEG_USD = 1;
 const YEAR_S = 366 * 86400;
 const QUOTE_CONCURRENCY = 2; // Jupiter rate-limits a burst of quotes
 const now = () => Math.floor(Date.now() / 1000);
@@ -192,16 +195,39 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const day = (t: number) =>
   new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
-const basket = (id: string) => {
-  const b = BASKETS.find((x) => x.id === id);
+const fromAi = (r: AiBasketRow): Basket => ({
+  id: r.id,
+  name: r.name,
+  tagline: r.tagline ?? "",
+  description: r.idea,
+  about: [],
+  stocks: JSON.parse(r.picks) as BasketPick[],
+  idea: r.idea,
+  bearCase: r.bear_case,
+});
+async function load(sql: Sql, id: string) {
+  const ai = id.startsWith("ai_") ? (await aiRepo.byId(sql, id))[0] : undefined;
+  const b = ai ? fromAi(ai) : BASKETS.find((x) => x.id === id);
   if (!b) throw notFound("basket");
   return b;
+}
+const names = async (sql: Sql, ids: string[]) => {
+  const ai = ids.filter((id) => id.startsWith("ai_"));
+  return new Map([
+    ...BASKETS.map((b) => [b.id, b.name] as const),
+    ...(ai.length ? await aiRepo.names(sql, ai) : []).map((r) => [r.id, r.name] as const),
+  ]);
 };
 
-// The token behind each ticker, deepest pool wins; a ticker we no longer list is left out.
+// Everything a basket can hold: stocks, ETFs, pre-IPO and crypto, one token per company (the deepest pool).
+export const universe = async (sql: Sql) => [
+  ...(await stocksRepo.all(sql)),
+  ...(await stocksRepo.all(sql, "crypto")),
+];
+
+// The token behind each ticker; a ticker we no longer list is left out.
 async function resolve(sql: Sql) {
-  const rows = await stocksRepo.all(sql);
-  const by = new Map(rows.map((r) => [r.underlying ?? r.symbol, r]));
+  const by = new Map((await universe(sql)).map((r) => [closeKey(r), r]));
   return (b: Basket) =>
     b.stocks.flatMap((s) => {
       const r = by.get(s.ticker);
@@ -209,12 +235,26 @@ async function resolve(sql: Sql) {
     });
 }
 
+// The stocks at the given weights (default: the basket's own), rescaled to 100. A zero or missing weight drops one.
+function mix<T extends BasketPick>(stocks: T[], weights?: Record<string, number>) {
+  const unknown = Object.keys(weights ?? {}).filter((t) => !stocks.some((s) => s.ticker === t));
+  if (unknown.length) throw new HttpError(400, "unknown_ticker", { tickers: unknown });
+  const kept = stocks
+    .map((s) => ({ ...s, weight: weights ? (weights[s.ticker] ?? 0) : s.weight }))
+    .filter((s) => s.weight > 0);
+  if (!kept.length) throw new HttpError(400, "empty_mix");
+  const sum = kept.reduce((n, s) => n + s.weight, 0);
+  return kept.map((s) => ({ ...s, weight: round2((s.weight / sum) * 100) }));
+}
+
 type Close = { ticker: string; ts: string; close: number };
 type Point = { t: number; value: number };
+type Weighted = { ticker: string; weight: number };
 
-// $100 at equal weight on the first day every stock has a close (or `from`, if later), held to the last close.
+// $100 split by weight on the first day every stock has a close (or `from`, if later), held to the last close.
 // Days a market was shut carry the previous close forward.
-function backtest(tickers: string[], rows: Close[], from = 0) {
+function backtest(stocks: Weighted[], rows: Close[], from = 0) {
+  const tickers = stocks.map((s) => s.ticker);
   const mine = rows.filter((r) => tickers.includes(r.ticker));
   const first = new Map<string, number>();
   for (const r of mine) if (!first.has(r.ticker)) first.set(r.ticker, Number(r.ts));
@@ -229,7 +269,7 @@ function backtest(tickers: string[], rows: Close[], from = 0) {
     for (; i < mine.length && Number(mine[i]!.ts) === d; i++) last.set(mine[i]!.ticker, mine[i]!.close);
     if (d < start) continue;
     if (!base.size) for (const t of tickers) base.set(t, last.get(t)!);
-    const value = tickers.reduce((s, t) => s + last.get(t)! / base.get(t)!, 0) * (100 / tickers.length);
+    const value = stocks.reduce((s, x) => s + (x.weight * last.get(x.ticker)!) / base.get(x.ticker)!, 0);
     points.push({ t: d, value: round2(value) });
   }
   const end = points.at(-1)!.t;
@@ -293,43 +333,28 @@ const card = (b: Basket, stocks: { row: StockRow }[], bt: ReturnType<typeof back
 export async function basketList(sql: Sql) {
   const [pick, closes] = await Promise.all([
     resolve(sql),
-    basketsRepo.closes(sql, [...new Set(BASKETS.flatMap(tickersOf))], now() - YEAR_S),
+    basketsRepo.closes(
+      sql,
+      [...new Set(BASKETS.flatMap((b) => b.stocks.map((s) => s.ticker)))],
+      now() - YEAR_S,
+    ),
   ]);
   return {
     baskets: BASKETS.map((b) => {
       const stocks = pick(b);
-      return card(
-        b,
-        stocks,
-        backtest(
-          stocks.map((s) => s.ticker),
-          closes,
-        ),
-      );
+      return card(b, stocks, stocks.length ? backtest(mix(stocks), closes) : null);
     }),
     asOf: now(),
   };
 }
 
-export async function basketDetail(sql: Sql, id: string) {
-  const b = basket(id);
-  const [pick, closes] = await Promise.all([
-    resolve(sql),
-    basketsRepo.closes(sql, [...tickersOf(b), BENCHMARK], now() - YEAR_S),
-  ]);
-  const stocks = pick(b);
-  const bt = backtest(
-    stocks.map((s) => s.ticker),
-    closes,
-  );
-  const bench = bt ? backtest([BENCHMARK], closes, bt.points[0]!.t) : null;
-  const ranked = bt ? [...bt.byTicker].sort((x, y) => y[1] - x[1]) : [];
-  const open = marketOpen();
+// Chart, returns over each window, risk and the S&P 500 over the same days, for one mix of a basket's stocks.
+async function performance(sql: Sql, stocks: (Weighted & { row: StockRow })[]) {
+  const closes = await basketsRepo.closes(sql, [...stocks.map((s) => s.ticker), BENCHMARK], now() - YEAR_S);
+  const bt = backtest(stocks, closes);
+  const bench = bt ? backtest([{ ticker: BENCHMARK, weight: 100 }], closes, bt.points[0]!.t) : null;
   return {
-    ...card(b, stocks, bt),
-    description: b.description,
-    about: b.about,
-    feeBps: 100,
+    bt,
     chart: bt ? { range: bt.returnLabel, points: bt.points } : null,
     performance: bt
       ? {
@@ -346,30 +371,72 @@ export async function basketDetail(sql: Sql, id: string) {
             : null,
         }
       : null,
-    risk: bt ? risk(bt.points, !!b.private) : null,
+    risk: bt
+      ? risk(
+          bt.points,
+          stocks.some((s) => s.row.category === "preipo"),
+        )
+      : null,
+  };
+}
+
+export async function basketDetail(sql: Sql, id: string) {
+  const [b, pick] = await Promise.all([load(sql, id), resolve(sql)]);
+  const stocks = pick(b);
+  if (!stocks.length) throw new HttpError(409, "basket_unavailable");
+  const mixed = mix(stocks);
+  const { bt, ...perf } = await performance(sql, mixed);
+  const ranked = bt ? [...bt.byTicker].sort((x, y) => y[1] - x[1]) : [];
+  const open = marketOpen();
+  return {
+    ...card(b, stocks, bt),
+    description: b.description,
+    about: b.about,
+    ai: b.idea ? { idea: b.idea, bearCase: b.bearCase ?? null } : null,
+    feeBps: 100,
+    ...perf,
     rebalance: {
       available: false,
-      note: "Equal weights, set when you buy. Auto-rebalancing is coming soon.",
+      note: "Weights are set when you buy. Auto-rebalancing is coming soon.",
     },
     best: ranked[0] ? { symbol: ranked[0][0], return1y: ranked[0][1] } : null,
     worst: ranked.at(-1) ? { symbol: ranked.at(-1)![0], return1y: ranked.at(-1)![1] } : null,
-    stocks: stocks.map((s) => ({
-      weight: round2(100 / stocks.length),
+    stocks: mixed.map((s) => ({
+      ticker: s.ticker,
+      weight: s.weight,
       return1y: bt?.byTicker.get(s.ticker) ?? null,
       why: s.why,
+      news: s.news ?? null,
       links: {
         issuer: ISSUER_URL[s.row.issuer] ?? null,
         solscan: `https://solscan.io/token/${s.row.mint}`,
-        yahoo: b.private ? null : `https://finance.yahoo.com/quote/${encodeURIComponent(yahooOf(s.ticker))}`,
+        yahoo:
+          s.row.category === "preipo"
+            ? null
+            : `https://finance.yahoo.com/quote/${encodeURIComponent(yahooOf(s.ticker))}`,
       },
       stock: shapeStock(s.row, open),
     })),
   };
 }
 
+// The slider: the same basket at the user's weights, what that mix did over the last year.
+export async function basketPreview(sql: Sql, id: string, weights: Record<string, number>) {
+  const [b, pick] = await Promise.all([load(sql, id), resolve(sql)]);
+  const mixed = mix(pick(b), weights);
+  const { bt, ...perf } = await performance(sql, mixed);
+  return {
+    weights: mixed.map((s) => ({ ticker: s.ticker, weight: s.weight })),
+    return1y: bt?.returnPct ?? null,
+    returnLabel: bt?.returnLabel ?? null,
+    ...perf,
+  };
+}
+
 // The basket's own news: only stories tagged to its stocks, newest first, a few per stock.
 export async function basketNews(sql: Sql, id: string, limit: number) {
-  const stocks = (await resolve(sql))(basket(id));
+  const [b, pick] = await Promise.all([load(sql, id), resolve(sql)]);
+  const stocks = pick(b);
   if (!stocks.length) return { items: [] };
   return {
     items: await news.feed(sql, {
@@ -406,9 +473,11 @@ export async function basketPositions(sql: Sql, userId: string) {
   const legs = await basketsRepo.legs(sql, userId);
   const held = holdings(legs);
   const mints = [...new Set([...held.values()].flatMap((m) => [...m.keys()]))];
-  const [found, sp] = mints.length
-    ? await Promise.all([walletRepo.known(sql, mints), sparks(sql, mints)]) // held: excluded or not
-    : [[], new Map<string, Spark>()];
+  const [found, sp, named] = await Promise.all([
+    mints.length ? walletRepo.known(sql, mints) : [], // held: excluded or not
+    mints.length ? sparks(sql, mints) : new Map<string, Spark>(),
+    names(sql, [...held.keys()]),
+  ]);
   const rows = new Map(found.map((r) => [r.mint, r]));
   const positions = [...held].flatMap(([basketId, m]) => {
     const parts = [...m].map(([mint, h]) => {
@@ -444,7 +513,7 @@ export async function basketPositions(sql: Sql, userId: string) {
     return [
       {
         basketId,
-        name: BASKETS.find((b) => b.id === basketId)?.name ?? basketId,
+        name: named.get(basketId) ?? basketId,
         paidUsd,
         valueUsd,
         pnlUsd: round2(valueUsd - paidUsd),
@@ -504,7 +573,7 @@ export async function basketPnl(sql: Sql, user: UserRow, orderId: string) {
       pnlPct: pnlPct(x.paid, x.received),
     }))
     .sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
-  const name = basket(o.basket_id).name;
+  const { name } = await load(sql, o.basket_id);
   const c = await pnlCard(sql, user, name.toLowerCase(), parts, {
     paid: parts.reduce((s, x) => s + x.paid, 0),
     received: parts.reduce((s, x) => s + x.received, 0),
@@ -533,8 +602,9 @@ async function quoteLegs(
   taker: string,
   amountUsd: number,
   legs: { mint: string; symbol: string; amount: bigint; weight: number }[],
-  existing?: string, // a retry adds legs to the order it is finishing
+  opts: { existing?: string; weights?: Record<string, number> } = {}, // a retry adds legs to the order it finishes
 ) {
+  const { existing, weights } = opts;
   const orderId = existing ?? crypto.randomUUID();
   if (!existing)
     await basketsRepo.insertOrder(c.sql, {
@@ -544,6 +614,7 @@ async function quoteLegs(
       basketId,
       side,
       amountUsd,
+      weights: weights ?? null,
       t: now(),
     });
   const quoted: (Awaited<ReturnType<typeof quote>> & { weight: number })[] = [];
@@ -587,9 +658,20 @@ async function quoteLegs(
   };
 }
 
-export async function quoteBuy(c: Ctx, id: string, amountUsd: number, taker: string) {
-  const b = basket(id);
+export async function quoteBuy(
+  c: Ctx,
+  id: string,
+  amountUsd: number,
+  taker: string,
+  weights?: Record<string, number>,
+) {
+  const [b, pick] = await Promise.all([load(c.sql, id), resolve(c.sql)]);
+  const stocks = mix(pick(b), weights);
   if (amountUsd < MIN_USD) throw new HttpError(400, "below_minimum", { minUsd: MIN_USD });
+  // Each stock is its own swap: too small a slice will not route.
+  const smallest = Math.min(...stocks.map((s) => s.weight));
+  if ((amountUsd * smallest) / 100 < MIN_LEG_USD)
+    throw new HttpError(400, "below_minimum", { minUsd: Math.ceil((MIN_LEG_USD * 100) / smallest) });
   // Check the wallet up front: otherwise every leg quotes fine and the last ones fail at execute.
   const usdc = await connection(c.env)
     .getTokenAccountBalance(ata(new PublicKey(taker), new PublicKey(USDC_MINT)))
@@ -601,9 +683,6 @@ export async function quoteBuy(c: Ctx, id: string, amountUsd: number, taker: str
       heldUsd,
       shortUsd: Math.ceil((amountUsd - heldUsd) * 100) / 100,
     });
-  const stocks = (await resolve(c.sql))(b);
-  if (!stocks.length) throw new HttpError(409, "basket_unavailable");
-  const each = BigInt(Math.floor((amountUsd * 1e6) / stocks.length));
   return quoteLegs(
     c,
     b.id,
@@ -613,15 +692,16 @@ export async function quoteBuy(c: Ctx, id: string, amountUsd: number, taker: str
     stocks.map((s) => ({
       mint: s.row.mint,
       symbol: s.row.symbol,
-      amount: each,
-      weight: round2(100 / stocks.length),
+      amount: BigInt(Math.floor((amountUsd * 1e6 * s.weight) / 100)),
+      weight: s.weight,
     })),
+    { weights: Object.fromEntries(stocks.map((s) => [s.ticker, s.weight])) },
   );
 }
 
 // Sells everything this wallet's position in the basket holds, never more than the wallet still has on chain.
 export async function quoteSell(c: Ctx, id: string, taker: string) {
-  const b = basket(id);
+  const b = await load(c.sql, id);
   const [legs, accounts] = await Promise.all([
     basketsRepo.legs(c.sql, c.user.id),
     tokenAccounts(c.env, taker),
@@ -706,7 +786,6 @@ export async function retryBuy(c: Ctx, orderId: string) {
   const busy = new Set(legs.filter((l) => l.status === "confirmed" || l.status === "submitted").map(stockOf));
   const todo = [...new Map(legs.filter((l) => !busy.has(stockOf(l))).map((l) => [stockOf(l), l])).values()];
   if (!todo.length) throw new HttpError(409, "nothing_to_retry");
-  const stocks = new Set(legs.map(stockOf)).size;
   return quoteLegs(
     c,
     o.basket_id,
@@ -717,8 +796,8 @@ export async function retryBuy(c: Ctx, orderId: string) {
       mint: stockOf(l),
       symbol: l.symbol,
       amount: BigInt(l.in_raw),
-      weight: round2(100 / stocks),
+      weight: round2((Number(l.in_raw) / 1e6 / Number(o.amount_usd)) * 100),
     })),
-    orderId,
+    { existing: orderId },
   );
 }

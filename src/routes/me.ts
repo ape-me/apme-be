@@ -24,6 +24,7 @@ import { accountRepo } from "../repos/account";
 import { catalog } from "../services/catalog";
 import { basketPositions, basketPnl } from "../services/baskets";
 import { swapPnl } from "../services/pnl";
+import { myBaskets } from "../services/ai";
 
 const shapeMe = (
   c: { env: Env },
@@ -102,6 +103,7 @@ me.post("/referrals/claim", async (c) =>
 );
 
 me.get("/baskets", async (c) => c.json(await basketPositions(c.get("sql"), c.get("user").id)));
+me.get("/baskets/ai", async (c) => c.json(await myBaskets(c.get("sql"), c.get("user").id)));
 me.get("/baskets/orders/:orderId/pnl", async (c) =>
   c.json(await basketPnl(c.get("sql"), c.get("user"), parse(z.string().uuid(), c.req.param("orderId")))),
 );

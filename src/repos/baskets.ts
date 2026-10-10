@@ -24,14 +24,16 @@ export const basketsRepo = {
       basketId: string;
       side: string;
       amountUsd: number;
+      weights: Record<string, number> | null; // a buy's mix, ticker -> %
       t: number;
     },
-  ) => sql`INSERT INTO basket_orders (id, user_id, wallet, basket_id, side, amount_usd, created_at)
-           VALUES (${o.id}, ${o.userId}, ${o.wallet}, ${o.basketId}, ${o.side}, ${o.amountUsd}, ${o.t})`,
+  ) => sql`INSERT INTO basket_orders (id, user_id, wallet, basket_id, side, amount_usd, weights, created_at)
+           VALUES (${o.id}, ${o.userId}, ${o.wallet}, ${o.basketId}, ${o.side}, ${o.amountUsd},
+                   ${o.weights && JSON.stringify(o.weights)}::text::jsonb, ${o.t})`,
   order: (sql: Sql, id: string, userId: string) =>
     sql<
-      { basket_id: string; side: "buy" | "sell"; wallet: string }[]
-    >`SELECT basket_id, side, wallet FROM basket_orders WHERE id = ${id} AND user_id = ${userId}`,
+      { basket_id: string; side: "buy" | "sell"; wallet: string; amount_usd: number }[]
+    >`SELECT basket_id, side, wallet, amount_usd FROM basket_orders WHERE id = ${id} AND user_id = ${userId}`,
   orderLegs: (sql: Sql, orderId: string) =>
     sql<
       {

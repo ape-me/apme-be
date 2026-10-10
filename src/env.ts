@@ -15,6 +15,7 @@ export type Env = {
   BLOCKED_COUNTRIES?: string; // ISO codes that may not trade, e.g. "US"; unset = open
   FEE_WALLET?: string; // pubkey that receives the 1% (USDC)
   JUP_API_KEY?: string;
+  ANTHROPIC_API_KEY?: string; // Claude: AI baskets and idea chips
   JUP_REFERRAL_ACCOUNT?: string; // Trigger (limit orders) referral account
   FINNHUB_KEY?: string;
   AI_GATEWAY_URL?: string;
