@@ -153,8 +153,24 @@ export const BASKETS: readonly Basket[] = [
   },
 ];
 export const tickersOf = (b: Basket) => b.stocks.map((s) => s.ticker);
-// Yahoo spells a few tickers its own way; private companies have no page.
-export const YAHOO: Record<string, string> = { "BRK.B": "BRK-B", SKHY: "000660.KS" };
+// A token's key in daily_closes: crypto gets Yahoo's -USD suffix so SOL the coin never meets a stock called SOL.
+export const closeKey = (r: Pick<StockRow, "category" | "underlying" | "symbol">) =>
+  r.category === "crypto" ? `${r.underlying ?? r.symbol}-USD` : (r.underlying ?? r.symbol);
+// Yahoo's spelling: Hong Kong listings are 4-digit codes, share classes take a dash, newer coins carry an id.
+const YAHOO: Record<string, string> = {
+  SKHY: "000660.KS",
+  "HYPE-USD": "HYPE32196-USD",
+  "PENGU-USD": "PENGU34466-USD",
+  "PEPE-USD": "PEPE24478-USD",
+  "TRUMP-USD": "TRUMP35336-USD",
+  "SUI-USD": "SUI20947-USD",
+  "TAO-USD": "TAO22974-USD",
+  "UNI-USD": "UNI7083-USD",
+  "JUP-USD": "JUP29210-USD",
+  "ARB-USD": "ARB11841-USD",
+};
+export const yahooOf = (t: string) =>
+  YAHOO[t] ?? (/^\d+$/.test(t) ? `${t.padStart(4, "0")}.HK` : t.replace(".", "-"));
 const ISSUER_URL: Record<string, string> = {
   xstocks: "https://xstocks.fi",
   backpack: "https://backpack.exchange",
@@ -344,9 +360,7 @@ export async function basketDetail(sql: Sql, id: string) {
       links: {
         issuer: ISSUER_URL[s.row.issuer] ?? null,
         solscan: `https://solscan.io/token/${s.row.mint}`,
-        yahoo: b.private
-          ? null
-          : `https://finance.yahoo.com/quote/${encodeURIComponent(YAHOO[s.ticker] ?? s.ticker)}`,
+        yahoo: b.private ? null : `https://finance.yahoo.com/quote/${encodeURIComponent(yahooOf(s.ticker))}`,
       },
       stock: shapeStock(s.row, open),
     })),

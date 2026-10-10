@@ -1,37 +1,56 @@
-// Daily closes of the real stocks behind each basket, for the 1-year return and chart. Runs on the prod box once a
-// day: Yahoo turns away Worker IPs. Private companies come from our own price snapshots instead.
+// Daily closes of every listed stock, ETF and crypto token, for basket returns and charts (AI baskets can pick any of
+// them). Runs on the prod box once a day: Yahoo turns away Worker IPs. Private companies come from our own snapshots.
 import postgres from "postgres";
-import { BASKETS, YAHOO, tickersOf } from "../src/services/baskets";
+import { closeKey, yahooOf } from "../src/services/baskets";
 import { basketsRepo } from "../src/repos/baskets";
+import { stocksRepo } from "../src/repos/stocks";
 
 const sql = postgres(process.env.DATABASE_URL!, { max: 2, prepare: false, idle_timeout: 5 });
-const priv = new Set(BASKETS.filter((b) => b.private).flatMap(tickersOf));
-const tickers = [...new Set(BASKETS.flatMap(tickersOf))];
-const done: Record<string, number | string> = {};
+const rows = [...(await stocksRepo.all(sql)), ...(await stocksRepo.all(sql, "crypto"))];
+const out = { ok: 0, snapshots: 0, empty: [] as string[], mismatch: [] as string[], failed: [] as string[] };
 
-for (const t of tickers) {
+for (const r of rows) {
+  const t = closeKey(r);
   try {
-    if (priv.has(t)) {
-      done[t] = (await basketsRepo.closesFromSnapshots(sql, t)).count;
+    if (r.category === "preipo") {
+      await basketsRepo.closesFromSnapshots(sql, t);
+      out.snapshots++;
       continue;
     }
-    const r = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(YAHOO[t] ?? t)}?range=1y&interval=1d`,
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooOf(t))}?range=1y&interval=1d`,
       { headers: { "user-agent": "Mozilla/5.0" } },
     );
-    const j = (await r.json()) as {
-      chart: { result?: { timestamp: number[]; indicators: { quote: { close: (number | null)[] }[] } }[] };
+    const j = (await res.json()) as {
+      chart: {
+        result?: {
+          meta: { currency: string };
+          timestamp: number[];
+          indicators: { quote: { close: (number | null)[] }[] };
+        }[];
+      };
     };
-    const res = j.chart.result?.[0];
-    const closes = res?.indicators.quote[0]?.close ?? [];
-    const rows = (res?.timestamp ?? []).flatMap((ts, i) =>
+    const c = j.chart.result?.[0];
+    const closes = c?.indicators.quote[0]?.close ?? [];
+    const days = (c?.timestamp ?? []).flatMap((ts, i) =>
       closes[i] == null ? [] : [{ ts: Math.floor(ts / 86400) * 86400, close: closes[i]! }],
     );
-    if (rows.length) await basketsRepo.upsertCloses(sql, t, rows);
-    done[t] = rows.length;
-  } catch (e) {
-    done[t] = (e as Error).message;
+    if (!days.length) {
+      out.empty.push(t);
+      continue;
+    }
+    // Yahoo has its own meaning for some symbols (a crypto ticker can be another coin): a USD close must match ours.
+    const now = Number(r.mark_usd ?? r.price_usd);
+    if (now > 0 && c!.meta.currency === "USD" && Math.abs(days.at(-1)!.close / now - 1) > 0.25) {
+      out.mismatch.push(t);
+      continue;
+    }
+    await basketsRepo.upsertCloses(sql, t, days);
+    out.ok++;
+  } catch {
+    out.failed.push(t);
   }
+  await new Promise((ok) => setTimeout(ok, 150));
 }
-console.log(new Date().toISOString(), JSON.stringify(done));
+console.log(new Date().toISOString(), JSON.stringify(out));
 await sql.end({ timeout: 2 });
