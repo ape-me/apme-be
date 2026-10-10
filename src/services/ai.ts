@@ -10,7 +10,6 @@ import { basketsRepo } from "../repos/baskets";
 import type { StockRow } from "../repos/stocks";
 import { DRAFT_S, basketDetail, closeKey, universe, type BasketPick } from "./baskets";
 import { news } from "./news";
-import { tradable } from "./shape";
 
 // AI baskets: Sonnet shortlists from everything we list, code drops what trades badly, Sonnet weighs the rest
 // against their recent news (scored by Jev). Haiku writes the idea chips.
@@ -34,7 +33,8 @@ Rules:
 - One ticker per company, and no two funds that track the same thing (e.g. two gold funds).
 - No leveraged or inverse funds unless the idea asks for them.
 - A bearish idea ("oil will crash") means picking what gains from it.
-- If the text is not an investing idea (gibberish, a question, a request for something else, harmful), set ok to false, candidates to [], and give 3 short example ideas in its place. Otherwise ok is true and examples is [].
+- ok is about the text alone: false only if it is not an investing idea at all (gibberish, an unrelated question, harmful). Then candidates is [] and examples holds 3 short example ideas. Macro, rates, bonds, currencies and bearish views are all ideas.
+- If it is an idea, ok is true and examples is []. When little in the list fits, return the closest few candidates anyway.
 
 Ticker | Name | Type`;
 
@@ -111,11 +111,10 @@ async function ask<T>(
   return r.parsed_output as T | null;
 }
 
-// Only what trades well enough to put real money in, right now: a deep pool (Ondo fills at the real price) and a price close to
+// Only what trades well enough to put real money in: a deep pool (Ondo fills at the real price) and a price close to
 // the real stock's (pre-IPO tokens run above their last round, so they get more room).
 const pickable = (r: StockRow) =>
   !r.halted &&
-  tradable(r) && // a weekend or holiday basket leaves out Ondo names that cannot fill until the next session
   (r.issuer === "ondo" || Number(r.liquidity_usd ?? 0) >= MIN_POOL_USD) &&
   Math.abs(Number(r.premium_pct ?? 0)) <= (r.category === "preipo" ? 10 : 3);
 
