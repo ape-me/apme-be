@@ -132,6 +132,21 @@ export const newsRepo = {
         ${a.only && a.mints.length ? sql`AND ns.mint IN ${sql(a.mints)}` : sql``}) x
       WHERE rn <= ${a.perStock} AND dup = 1
       ORDER BY ${a.mints.length ? sql`(mint IN ${sql(a.mints)}) DESC,` : sql``} published_at DESC LIMIT ${a.limit}`,
+  // Companies whose price moved by `pct` or more over the last 15 minutes, biggest first. Thin pools are left out:
+  // their prices jump without news.
+  movers: async (sql: Sql, t: number, pct: number, limit: number) =>
+    (
+      await sql<{ u: string }[]>`
+      SELECT coalesce(s.underlying, s.symbol) AS u FROM
+        (SELECT DISTINCT ON (mint) mint, price_usd FROM stock_snapshots
+          WHERE ts > ${t - 300} AND price_usd > 0 ORDER BY mint, ts DESC) n
+      JOIN (SELECT DISTINCT ON (mint) mint, price_usd FROM stock_snapshots
+          WHERE ts BETWEEN ${t - 1200} AND ${t - 900} AND price_usd > 0 ORDER BY mint, ts DESC) o USING (mint)
+      JOIN stocks s ON s.mint = n.mint
+      WHERE NOT s.excluded AND (coalesce(s.liquidity_usd, 0) >= 50000 OR s.issuer = 'ondo')
+        AND abs(n.price_usd / o.price_usd - 1) >= ${pct}
+      GROUP BY 1 ORDER BY max(abs(n.price_usd / o.price_usd - 1)) DESC LIMIT ${limit}`
+    ).map((r) => r.u),
   prune: (sql: Sql, before: number) => sql`DELETE FROM news WHERE published_at < ${before}`,
   // One row per company the app shows, its deepest token standing in for the rest. `pooled` is false for names
   // only Ondo carries: they fill over RFQ, have no pool, and get polled less often.

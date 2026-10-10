@@ -425,13 +425,23 @@ export async function scoreNews(env: Env, sql: Sql, limit = 120) {
 }
 
 // Cron body: a slice of the universe per run, cheap filter, store, tag, notify rooms.
-export async function ingestNews(env: Env, sql: Sql, minute: number) {
-  // Finnhub allows 60 calls a minute and each stock is one, so pooled names are walked in quarters (every 20 min)
-  // and Ondo-only names in twelfths (every hour), with a cap per stock.
+// When a stock last got a price-move lookup, so one still moving is not fetched every minute.
+const looked = new Map<string, number>();
+
+// One pass of the news loop, run every minute: outlet and wire feeds, the stocks moving 2%+ in 15 minutes, and on
+// every fifth pass a slice of the per-stock walk. Finnhub allows 60 calls a minute and each stock is one, so pooled
+// names are walked in quarters (every 20 min) and Ondo-only names in twelfths (every hour), with a cap per stock.
+export async function ingestNews(env: Env, sql: Sql, pass: number) {
   const stocks = await newsRepo.stocksForNews(sql);
-  const run = Math.floor(minute / 5);
-  const slice = stocks.filter((s, i) => (s.pooled ? i % 4 === run % 4 : i % 12 === run % 12));
   const t = Math.floor(Date.now() / 1000);
+  const run = pass / 5;
+  const walk = pass % 5 ? [] : stocks.filter((s, i) => (s.pooled ? i % 4 === run % 4 : i % 12 === run % 12));
+  const moving = new Set(await newsRepo.movers(sql, t, 0.02, 5));
+  const movers = stocks.filter(
+    (s) => moving.has(s.underlying ?? s.symbol) && !walk.includes(s) && (looked.get(s.mint) ?? 0) < t - 900,
+  );
+  for (const s of movers) looked.set(s.mint, t);
+  const slice = [...walk, ...movers];
   const fresh: z.infer<typeof IngestNews>[] = [];
   let added = 0;
   const hits = matchers(stocks);
@@ -491,9 +501,16 @@ export async function ingestNews(env: Env, sql: Sql, minute: number) {
     }
   }
   const { scored } = await scoreNews(env, sql, 40);
-  if (minute % 60 === 0) await newsRepo.prune(sql, t - 7 * 86400);
+  if (pass % 60 === 0) await newsRepo.prune(sql, t - 7 * 86400);
   if (fresh.length) await pushNews(env, fresh);
-  return { stocks: slice.length, feeds: feeds.seen, market: feeds.market, added, scored };
+  return {
+    stocks: walk.length,
+    movers: movers.map((s) => s.symbol),
+    feeds: feeds.seen,
+    market: feeds.market,
+    added,
+    scored,
+  };
 }
 
 // Outlet feeds: every headline is matched against the whole catalog; the ones about no company but about the

@@ -1,5 +1,6 @@
-// Direct outlet feeds: one request each for 10 to 90 headlines, polled on every ingest run. Reuters, Barron's and
-// AP publish no open feed; Fortune only its home feed.
+// Direct outlet feeds: one request each for 10 to 90 headlines, polled every minute. Reuters, Barron's and AP publish
+// no open feed; Fortune only its home feed. The press-release wires carry company announcements before any outlet
+// writes them up (GlobeNewswire turns away our server).
 export const FEEDS: { name: string; url: string }[] = [
   { name: "CNBC", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
   { name: "CNBC", url: "https://www.cnbc.com/id/20910258/device/rss/rss.html" },
@@ -24,6 +25,12 @@ export const FEEDS: { name: string; url: string }[] = [
   { name: "Benzinga", url: "https://www.benzinga.com/feed" },
   { name: "CoinDesk", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" },
   { name: "The Block", url: "https://www.theblock.co/rss.xml" },
+  { name: "PR Newswire", url: "https://www.prnewswire.com/rss/news-releases-list.rss" },
+  {
+    name: "PR Newswire",
+    url: "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss",
+  },
+  { name: "Business Wire", url: "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFtRWA==" },
 ];
 
 export type FeedItem = {
@@ -56,12 +63,28 @@ export const text = (s: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// Polled every minute, so each feed is only downloaded when it changed, and an outlet that pushes back (403/429) is
+// left alone for 10 minutes. Lives as long as the news loop does.
+const polled = new Map<string, { etag: string | null; modified: string | null; quietUntil: number }>();
+
 // RSS `<item>` and Atom `<entry>` both land here; whichever fields an outlet fills are used.
 export async function outletFeed(f: { name: string; url: string }): Promise<FeedItem[]> {
+  const p = polled.get(f.url);
+  if (p && p.quietUntil > Date.now()) return [];
   const r = await fetch(f.url, {
-    headers: { "user-agent": UA, accept: "application/rss+xml, application/xml, text/xml" },
+    headers: {
+      "user-agent": UA,
+      accept: "application/rss+xml, application/xml, text/xml",
+      ...(p?.etag ? { "if-none-match": p.etag } : {}),
+      ...(p?.modified ? { "if-modified-since": p.modified } : {}),
+    },
   });
-  if (!r.ok) return [];
+  if (r.status === 403 || r.status === 429) {
+    polled.set(f.url, { etag: null, modified: null, quietUntil: Date.now() + 600_000 });
+    return [];
+  }
+  if (!r.ok) return []; // 304: nothing new since the last pass
+  polled.set(f.url, { etag: r.headers.get("etag"), modified: r.headers.get("last-modified"), quietUntil: 0 });
   const xml = await r.text();
   const entries = [...xml.matchAll(/<(item|entry)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => m[2]!);
   return entries
