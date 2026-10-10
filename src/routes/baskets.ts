@@ -52,20 +52,25 @@ baskets.post("/ai/eval", requireAiEval, withDb, async (c) => {
   return c.json(await evalIdea(c.env, c.get("sql"), b.idea));
 });
 
-baskets.get("/:id/news", rateLimited, withDb, (c) =>
-  cached(c.req.raw, 60, async () => {
-    const limit = parse(z.coerce.number().int().min(1).max(50).default(20), c.req.query("limit"));
-    return c.json(await basketNews(c.get("sql"), c.req.param("id"), limit));
-  }),
-);
-baskets.get("/:id", rateLimited, withDb, (c) =>
-  cached(c.req.raw, 60, async () => c.json(await basketDetail(c.get("sql"), c.req.param("id")))),
-);
-
-baskets.post("/:id/preview", rateLimited, withDb, async (c) => {
+// Handlers shared by public baskets and AI ones, which only their signed-in author can open (and never edge-cached).
+const AI_ID = "/:id{ai_[a-z0-9]+}";
+const own = [rateLimited, withDb, requireAuth] as const;
+const viewer = (c: C) => (c.req.param("id")?.startsWith("ai_") ? c.get("user")?.id : undefined);
+const newsOf = async (c: C) => {
+  const limit = parse(z.coerce.number().int().min(1).max(50).default(20), c.req.query("limit"));
+  return c.json(await basketNews(c.get("sql"), c.req.param("id")!, limit, viewer(c)));
+};
+const detailOf = async (c: C) => c.json(await basketDetail(c.get("sql"), c.req.param("id")!, viewer(c)));
+const previewOf = async (c: C) => {
   const b = parse(z.object({ weights: Weights }), await c.req.json());
-  return c.json(await basketPreview(c.get("sql"), c.req.param("id"), b.weights));
-});
+  return c.json(await basketPreview(c.get("sql"), c.req.param("id")!, b.weights, viewer(c)));
+};
+baskets.get(`${AI_ID}/news`, ...own, newsOf);
+baskets.get(AI_ID, ...own, detailOf);
+baskets.post(`${AI_ID}/preview`, ...own, previewOf);
+baskets.get("/:id/news", rateLimited, withDb, (c) => cached(c.req.raw, 60, () => newsOf(c)));
+baskets.get("/:id", rateLimited, withDb, (c) => cached(c.req.raw, 60, () => detailOf(c)));
+baskets.post("/:id/preview", rateLimited, withDb, previewOf);
 
 baskets.post("/:id/quote", ...trade, async (c) => {
   const b = parse(

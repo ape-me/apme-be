@@ -8,7 +8,7 @@ import type { UserRow } from "../repos/account";
 import { aiRepo } from "../repos/ai";
 import { basketsRepo } from "../repos/baskets";
 import type { StockRow } from "../repos/stocks";
-import { basketDetail, closeKey, universe, type BasketPick } from "./baskets";
+import { DRAFT_S, basketDetail, closeKey, universe, type BasketPick } from "./baskets";
 import { news } from "./news";
 
 // AI baskets: Sonnet shortlists from everything we list, code drops what trades badly, Sonnet weighs the rest
@@ -217,8 +217,8 @@ async function generate(env: Env, sql: Sql, idea: string) {
 
 export async function buildBasket(env: Env, sql: Sql, user: UserRow, typed: string) {
   const idea = clean(typed);
-  const [same] = await aiRepo.recent(sql, user.id, idea, now() - 3600);
-  if (same) return basketDetail(sql, same.id);
+  const [same] = await aiRepo.recent(sql, user.id, idea, now() - DRAFT_S);
+  if (same) return basketDetail(sql, same.id, user.id);
   if ((await aiRepo.countSince(sql, user.id, now() - 86400)) >= DAILY_LIMIT)
     throw new HttpError(429, "daily_limit", { limit: DAILY_LIMIT });
   const g = await generate(env, sql, idea);
@@ -234,7 +234,7 @@ export async function buildBasket(env: Env, sql: Sql, user: UserRow, typed: stri
     model: SONNET,
     t: now(),
   });
-  return basketDetail(sql, id);
+  return basketDetail(sql, id, user.id);
 }
 
 // Prompt tuning: what the model makes of an idea, without saving it or counting against anyone.

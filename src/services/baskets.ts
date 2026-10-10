@@ -205,8 +205,11 @@ const fromAi = (r: AiBasketRow): Basket => ({
   idea: r.idea,
   bearCase: r.bear_case,
 });
-async function load(sql: Sql, id: string) {
-  const ai = id.startsWith("ai_") ? (await aiRepo.byId(sql, id))[0] : undefined;
+// An AI basket is a draft for an hour, kept once its author invests, and never shown to anyone else.
+export const DRAFT_S = 3600;
+async function load(sql: Sql, id: string, viewer?: string) {
+  const ai =
+    id.startsWith("ai_") && viewer ? (await aiRepo.byId(sql, id, viewer, now() - DRAFT_S))[0] : undefined;
   const b = ai ? fromAi(ai) : BASKETS.find((x) => x.id === id);
   if (!b) throw notFound("basket");
   return b;
@@ -380,8 +383,8 @@ async function performance(sql: Sql, stocks: (Weighted & { row: StockRow })[]) {
   };
 }
 
-export async function basketDetail(sql: Sql, id: string) {
-  const [b, pick] = await Promise.all([load(sql, id), resolve(sql)]);
+export async function basketDetail(sql: Sql, id: string, viewer?: string) {
+  const [b, pick] = await Promise.all([load(sql, id, viewer), resolve(sql)]);
   const stocks = pick(b);
   if (!stocks.length) throw new HttpError(409, "basket_unavailable");
   const mixed = mix(stocks);
@@ -421,8 +424,8 @@ export async function basketDetail(sql: Sql, id: string) {
 }
 
 // The slider: the same basket at the user's weights, what that mix did over the last year.
-export async function basketPreview(sql: Sql, id: string, weights: Record<string, number>) {
-  const [b, pick] = await Promise.all([load(sql, id), resolve(sql)]);
+export async function basketPreview(sql: Sql, id: string, weights: Record<string, number>, viewer?: string) {
+  const [b, pick] = await Promise.all([load(sql, id, viewer), resolve(sql)]);
   const mixed = mix(pick(b), weights);
   const { bt, ...perf } = await performance(sql, mixed);
   return {
@@ -434,8 +437,8 @@ export async function basketPreview(sql: Sql, id: string, weights: Record<string
 }
 
 // The basket's own news: only stories tagged to its stocks, newest first, a few per stock.
-export async function basketNews(sql: Sql, id: string, limit: number) {
-  const [b, pick] = await Promise.all([load(sql, id), resolve(sql)]);
+export async function basketNews(sql: Sql, id: string, limit: number, viewer?: string) {
+  const [b, pick] = await Promise.all([load(sql, id, viewer), resolve(sql)]);
   const stocks = pick(b);
   if (!stocks.length) return { items: [] };
   return {
@@ -573,7 +576,7 @@ export async function basketPnl(sql: Sql, user: UserRow, orderId: string) {
       pnlPct: pnlPct(x.paid, x.received),
     }))
     .sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
-  const { name } = await load(sql, o.basket_id);
+  const { name } = await load(sql, o.basket_id, user.id);
   const c = await pnlCard(sql, user, name.toLowerCase(), parts, {
     paid: parts.reduce((s, x) => s + x.paid, 0),
     received: parts.reduce((s, x) => s + x.received, 0),
@@ -665,7 +668,7 @@ export async function quoteBuy(
   taker: string,
   weights?: Record<string, number>,
 ) {
-  const [b, pick] = await Promise.all([load(c.sql, id), resolve(c.sql)]);
+  const [b, pick] = await Promise.all([load(c.sql, id, c.user.id), resolve(c.sql)]);
   const stocks = mix(pick(b), weights);
   if (amountUsd < MIN_USD) throw new HttpError(400, "below_minimum", { minUsd: MIN_USD });
   // Each stock is its own swap: too small a slice will not route.
@@ -701,7 +704,7 @@ export async function quoteBuy(
 
 // Sells everything this wallet's position in the basket holds, never more than the wallet still has on chain.
 export async function quoteSell(c: Ctx, id: string, taker: string) {
-  const b = await load(c.sql, id);
+  const b = await load(c.sql, id, c.user.id);
   const [legs, accounts] = await Promise.all([
     basketsRepo.legs(c.sql, c.user.id),
     tokenAccounts(c.env, taker),
@@ -756,7 +759,8 @@ export async function submitBasket(
   orderId: string,
   signed: { requestId: string; signedTransaction: string }[],
 ) {
-  if (!(await basketsRepo.order(sql, orderId, user.id)).length) throw notFound("basket order");
+  const [o] = await basketsRepo.order(sql, orderId, user.id);
+  if (!o) throw notFound("basket order");
   const ids = new Set((await basketsRepo.orderLegs(sql, orderId)).map((r) => r.id));
   if (signed.some((s) => !ids.has(s.requestId))) throw badRequest("requestId is not part of this order");
   const results = await Promise.allSettled(
@@ -774,6 +778,9 @@ export async function submitBasket(
   );
   const status = orderStatus(await basketsRepo.orderLegs(sql, orderId));
   await basketsRepo.setStatus(sql, orderId, status);
+  // The first buy that lands keeps an AI draft for good.
+  if (o.side === "buy" && status !== "failed" && o.basket_id.startsWith("ai_"))
+    await aiRepo.save(sql, o.basket_id, now());
   return { orderId, status, legs };
 }
 
