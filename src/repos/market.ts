@@ -17,6 +17,28 @@ export const marketRepo = {
       SELECT (ts / ${step}) * ${step} AS t, (array_agg(price_usd ORDER BY ts))[1] AS price, NULL::float8 AS mark
       FROM stock_ticks WHERE mint = ${mint} AND ts >= ${from}
       GROUP BY 1 ORDER BY 1`,
+  // The biggest stories on this token in the window, with its price when each came out and an hour later.
+  events: (sql: Sql, mint: string, from: number, to: number, minImpact: number, limit: number) => sql<
+    {
+      id: string;
+      title: string;
+      source: string | null;
+      url: string;
+      published_at: string;
+      impact: number;
+      direction: string | null;
+      p0: number | null;
+      p1: number | null;
+    }[]
+  >`
+      SELECT n.id, n.title, n.source, n.url, n.published_at, n.impact, n.direction,
+        (SELECT price_usd FROM stock_snapshots WHERE mint = ${mint} AND price_usd > 0 AND ts <= n.published_at
+          ORDER BY ts DESC LIMIT 1) AS p0,
+        (SELECT price_usd FROM stock_snapshots WHERE mint = ${mint} AND price_usd > 0 AND ts <= n.published_at + 3600
+          ORDER BY ts DESC LIMIT 1) AS p1
+      FROM news n JOIN news_stocks ns ON ns.news_id = n.id
+      WHERE ns.mint = ${mint} AND NOT n.junk AND n.impact >= ${minImpact} AND n.published_at BETWEEN ${from} AND ${to}
+      ORDER BY n.impact DESC, n.published_at DESC LIMIT ${limit}`,
   health: async (sql: Sql) =>
     (
       await sql<{ last_slot: number; updated_at: number; newest_trade: number | null }[]>`

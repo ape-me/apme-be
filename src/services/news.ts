@@ -26,7 +26,7 @@ const TIER1 = [
   "fortune",
   "the verge",
 ];
-const IMPACT = ["none", "minor", "material", "major", "critical"] as const;
+export const IMPACT = ["none", "minor", "material", "major", "critical"] as const;
 export const IMPACT_LEVEL: Record<string, number> = { none: 0, minor: 1, material: 2, major: 3, critical: 4 };
 const ymd = (x: Date) => x.toISOString().slice(0, 10);
 // Headlines with no company in them that still move every stock: rates, inflation, tariffs, the index itself.
@@ -501,7 +501,7 @@ export async function ingestNews(env: Env, sql: Sql, pass: number) {
     }
   }
   const { scored } = await scoreNews(env, sql, 40);
-  if (pass % 60 === 0) await newsRepo.prune(sql, t - 7 * 86400);
+  if (pass % 60 === 0) await newsRepo.prune(sql, t - 7 * 86400, t - 30 * 86400);
   if (fresh.length) await pushNews(env, fresh);
   return {
     stocks: walk.length,

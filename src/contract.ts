@@ -60,6 +60,18 @@ export const Issuer = z.enum(["xstocks", "backpack", "prestocks", "ondo"]);
 // Stock price line for the Invest-mode chart. One point per bucket, oldest → newest; `mark` is the fair value if known.
 export const HistoryRange = z.enum(["5m", "15m", "1h", "1d", "1w", "1m"]);
 export const HistoryPoint = z.object({ t: z.number().int(), price: z.number(), mark: z.number().nullable() });
+// A news marker on the chart: `t` is the point it sits on; same `t`, same marker (show a count).
+export const NewsEvent = z.object({
+  t: z.number().int(),
+  publishedAt: z.number().int(),
+  id: z.string(),
+  title: z.string(),
+  source: z.string().nullable(),
+  url: z.string(),
+  impact: z.string().nullable(),
+  direction: z.string().nullable(),
+  moveAfterPct: z.number().nullable(), // price change in the hour after it came out; null until that hour is over
+});
 export const HistoryResponse = z.object({
   mint: Mint,
   range: HistoryRange,
@@ -68,6 +80,7 @@ export const HistoryResponse = z.object({
   points: z.array(HistoryPoint),
   changeAbs: z.number().nullable(),
   changePct: z.number().nullable(),
+  events: z.array(NewsEvent), // 1d, 1w, 1m only; empty on the short ranges
 });
 // Home screen: hand-picked groups (ids are stable) and the three movers lists, all full Stock objects.
 export const Collection = z.object({

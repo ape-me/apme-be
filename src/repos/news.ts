@@ -147,7 +147,9 @@ export const newsRepo = {
         AND abs(n.price_usd / o.price_usd - 1) >= ${pct}
       GROUP BY 1 ORDER BY max(abs(n.price_usd / o.price_usd - 1)) DESC LIMIT ${limit}`
     ).map((r) => r.u),
-  prune: (sql: Sql, before: number) => sql`DELETE FROM news WHERE published_at < ${before}`,
+  // A week of news, except major and critical stories, which stay as long as the chart goes back (their markers).
+  prune: (sql: Sql, before: number, majorBefore: number) =>
+    sql`DELETE FROM news WHERE published_at < ${majorBefore} OR (published_at < ${before} AND coalesce(impact, 0) < 3)`,
   // One row per company the app shows, its deepest token standing in for the rest. `pooled` is false for names
   // only Ondo carries: they fill over RFQ, have no pool, and get polled less often.
   stocksForNews: (sql: Sql) =>
