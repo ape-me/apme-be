@@ -43,7 +43,7 @@ Pick 3 to 6 candidates and weight them.
 - More weight for what is closest to the idea and has strong recent news in its favour; less for side bets.
 - No two picks that are the same bet (two funds on the same asset, a fund plus its top holding at a small weight).
 - why: at most 12 plain words, no trailing period. Say first how it fits the idea.
-- newsId: only for a story that is about this company itself and backs the idea; add its fact to why. Otherwise null. A story about a supplier, partner or an unrelated product does not count.
+- newsId: only for a story that is about this company itself and backs the idea; add its fact to why. Otherwise null. A story about a supplier, partner or an unrelated product does not count. With newsId null, why mentions no news at all.
 - name: 1 to 3 words, catchy, no tickers. tagline: at most 8 words.
 - bearCase: one sentence, at most 25 words, the main way this basket loses money.
 - Plain English, no hype, never advice ("you should").`;
