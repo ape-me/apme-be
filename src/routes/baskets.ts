@@ -4,7 +4,7 @@ import type { Context } from "hono";
 import type { Env } from "../env";
 import { withDb } from "../middleware/db";
 import { rateLimited } from "../middleware/ratelimit";
-import { requireAuth, requireActive, requireRegion, type AuthVars } from "../middleware/auth";
+import { requireAuth, requireActive, requireAiEval, requireRegion, type AuthVars } from "../middleware/auth";
 import { cached } from "../lib/cache";
 import { parse } from "../lib/validate";
 import { Mint } from "../contract";
@@ -18,7 +18,7 @@ import {
   retryBuy,
   submitBasket,
 } from "../services/baskets";
-import { buildBasket, ideaChips } from "../services/ai";
+import { buildBasket, evalIdea, ideaChips } from "../services/ai";
 
 type C = Context<{ Bindings: Env; Variables: AuthVars }>;
 const ctx = (c: C) => ({
@@ -46,6 +46,10 @@ baskets.get("/ai/ideas", rateLimited, withDb, (c) =>
 baskets.post("/ai", rateLimited, withDb, requireAuth, async (c) => {
   const b = parse(z.object({ idea: z.string().trim().min(3).max(200) }), await c.req.json());
   return c.json(await buildBasket(c.env, c.get("sql"), c.get("user"), b.idea));
+});
+baskets.post("/ai/eval", requireAiEval, withDb, async (c) => {
+  const b = parse(z.object({ idea: z.string().trim().min(3).max(200) }), await c.req.json());
+  return c.json(await evalIdea(c.env, c.get("sql"), b.idea));
 });
 
 baskets.get("/:id/news", rateLimited, withDb, (c) =>

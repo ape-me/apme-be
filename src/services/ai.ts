@@ -129,13 +129,10 @@ function fives(picks: { weight: number }[]) {
   return steps.map((x) => x * 5);
 }
 
-export async function buildBasket(env: Env, sql: Sql, user: UserRow, typed: string) {
-  const idea = typed.trim().replace(/\s+/g, " ");
-  const [same] = await aiRepo.recent(sql, user.id, idea, now() - 3600);
-  if (same) return basketDetail(sql, same.id);
-  if ((await aiRepo.countSince(sql, user.id, now() - 86400)) >= DAILY_LIMIT)
-    throw new HttpError(429, "daily_limit", { limit: DAILY_LIMIT });
+const clean = (typed: string) => typed.trim().replace(/\s+/g, " ");
 
+// The model's basket for an idea: name, tagline, bear case and weighted picks. Nothing is saved.
+async function generate(env: Env, sql: Sql, idea: string) {
   const rows = (await universe(sql)).filter(pickable).sort((a, b) => closeKey(a).localeCompare(closeKey(b)));
   const by = new Map(rows.map((r) => [closeKey(r), r]));
   const claude = client(env);
@@ -212,21 +209,33 @@ export async function buildBasket(env: Env, sql: Sql, user: UserRow, typed: stri
     });
   }
   if (!final || picks.length < 3) throw new HttpError(409, "no_match");
+  return { name: final.name, tagline: final.tagline, bearCase: final.bearCase, shortlist: candidates, picks };
+}
 
+export async function buildBasket(env: Env, sql: Sql, user: UserRow, typed: string) {
+  const idea = clean(typed);
+  const [same] = await aiRepo.recent(sql, user.id, idea, now() - 3600);
+  if (same) return basketDetail(sql, same.id);
+  if ((await aiRepo.countSince(sql, user.id, now() - 86400)) >= DAILY_LIMIT)
+    throw new HttpError(429, "daily_limit", { limit: DAILY_LIMIT });
+  const g = await generate(env, sql, idea);
   const id = `ai_${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
   await aiRepo.insert(sql, {
     id,
     userId: user.id,
     idea,
-    name: final.name,
-    tagline: final.tagline,
-    bear_case: final.bearCase,
-    picks: JSON.stringify(picks),
+    name: g.name,
+    tagline: g.tagline,
+    bear_case: g.bearCase,
+    picks: JSON.stringify(g.picks),
     model: SONNET,
     t: now(),
   });
   return basketDetail(sql, id);
 }
+
+// Prompt tuning: what the model makes of an idea, without saving it or counting against anyone.
+export const evalIdea = (env: Env, sql: Sql, typed: string) => generate(env, sql, clean(typed));
 
 export async function myBaskets(sql: Sql, userId: string) {
   return {

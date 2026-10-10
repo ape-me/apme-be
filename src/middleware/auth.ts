@@ -49,6 +49,13 @@ export const requireActive: MiddlewareHandler<{ Bindings: Env; Variables: AuthVa
   await next();
 };
 
+// Prompt tuning runs with its own token, so the admin one never leaves the operator's hands.
+export const requireAiEval: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const t = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!c.env.AI_EVAL_TOKEN || t !== c.env.AI_EVAL_TOKEN) throw unauthorized();
+  await next();
+};
+
 export const requireAdmin: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const t = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
   if (!c.env.ADMIN_TOKEN || t !== c.env.ADMIN_TOKEN) throw unauthorized();
