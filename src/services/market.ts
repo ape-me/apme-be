@@ -19,8 +19,8 @@ const RANGE = {
 const MARKERS: Partial<Record<keyof typeof RANGE, { min: number; alone: number; newest: boolean }>> = {
   "1h": { min: 1, alone: 3, newest: true },
   "1d": { min: 1, alone: 3, newest: true },
-  "1w": { min: 3, alone: 4, newest: false },
-  "1m": { min: 3, alone: 4, newest: false },
+  "1w": { min: 2, alone: 3, newest: false },
+  "1m": { min: 2, alone: 3, newest: false },
 };
 const MAX_MARKERS = 6;
 // Long words too common in market headlines to tie two stories together.
