@@ -67,6 +67,7 @@ export const NewsEvent = z.object({
   id: z.string(),
   title: z.string(),
   source: z.string().nullable(),
+  sourceLogo: z.string().nullable(), // the outlet's square icon (PNG, 128px)
   url: z.string(),
   impact: z.string().nullable(),
   direction: z.string().nullable(),

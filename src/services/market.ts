@@ -23,6 +23,28 @@ const MARKERS: Partial<Record<keyof typeof RANGE, { min: number; alone: number; 
   "1m": { min: 3, alone: 4, newest: false },
 };
 const MAX_MARKERS = 6;
+// Long words too common in market headlines to tie two stories together.
+const COMMON = new Set(
+  (
+    "earnings quarter quarterly revenue billion million investors investor analysts analyst company companies " +
+    "financial according announces announced launches launched acquire acquires acquisition results guidance " +
+    "outlook trading markets reports reported shareholders dividend partnership partners interview exclusive " +
+    "breaking artificial intelligence technology technologies startup startups explores further options " +
+    "investment investing rallies plunges surges percent infrastructure buying selling nasdaq record"
+  ).split(" "),
+);
+// The same story under different headlines usually shares one distinctive name ("Reflection" in four takes on
+// Nvidia's deal talks): a long word that is not market boilerplate and not the company's own name, which is
+// whatever most of this token's headlines have in common.
+const keyTerms = (title: string, own: Set<string>) =>
+  [...words(title)].filter((w) => w.length >= 7 && !own.has(w) && !COMMON.has(w));
+const logoOf = (url: string) => {
+  try {
+    return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=128`;
+  } catch {
+    return null;
+  }
+};
 type Story = Awaited<ReturnType<typeof marketRepo.events>>[number];
 
 export const market = {
@@ -45,7 +67,14 @@ export const market = {
       .filter((n) => sourceTier(n.source) < 3 || n.impact >= rule!.alone)
       .sort((a, b) => sourceTier(a.source) - sourceTier(b.source) || b.impact - a.impact);
     const news: Story[] = [];
-    for (const n of ranked) if (!news.some((k) => sameStory(words(n.title), words(k.title)))) news.push(n);
+    const seen = new Map<string, number>();
+    for (const n of found) for (const w of words(n.title)) seen.set(w, (seen.get(w) ?? 0) + 1);
+    const own = new Set([...seen].filter(([, c]) => c > found.length / 2).map(([w]) => w));
+    const same = (a: Story, b: Story) =>
+      sameStory(words(a.title), words(b.title)) ||
+      (Math.abs(Number(a.published_at) - Number(b.published_at)) < 86400 &&
+        keyTerms(a.title, own).some((w) => keyTerms(b.title, own).includes(w)));
+    for (const n of ranked) if (!news.some((k) => same(n, k))) news.push(n);
     news.sort((a, b) =>
       rule!.newest
         ? Number(b.published_at) - Number(a.published_at)
@@ -62,6 +91,7 @@ export const market = {
           title: n.title,
           source: n.source,
           url: n.url,
+          sourceLogo: logoOf(n.url),
           impact: IMPACT[n.impact] ?? null,
           direction: n.direction,
           moveAfterPct: at <= to - 3600 && n.p0 && n.p1 ? Math.round((n.p1 / n.p0 - 1) * 10000) / 100 : null,
