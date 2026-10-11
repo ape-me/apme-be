@@ -29,14 +29,16 @@ export const marketRepo = {
       direction: string | null;
       p0: number | null;
       p1: number | null;
+      stock: string;
     }[]
   >`
       SELECT n.id, n.title, n.source, n.url, n.published_at, n.impact, n.direction,
         (SELECT price_usd FROM stock_snapshots WHERE mint = ${mint} AND price_usd > 0 AND ts <= n.published_at
           ORDER BY ts DESC LIMIT 1) AS p0,
         (SELECT price_usd FROM stock_snapshots WHERE mint = ${mint} AND price_usd > 0 AND ts <= n.published_at + 3600
-          ORDER BY ts DESC LIMIT 1) AS p1
-      FROM news n JOIN news_stocks ns ON ns.news_id = n.id
+          ORDER BY ts DESC LIMIT 1) AS p1,
+        s.name || ' ' || coalesce(s.underlying, s.symbol) AS stock
+      FROM news n JOIN news_stocks ns ON ns.news_id = n.id JOIN stocks s ON s.mint = ns.mint
       WHERE ns.mint = ${mint} AND NOT n.junk AND n.impact >= ${minImpact} AND n.published_at BETWEEN ${from} AND ${to}
       ORDER BY n.published_at DESC LIMIT ${limit}`,
   health: async (sql: Sql) =>

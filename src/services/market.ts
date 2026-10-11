@@ -34,16 +34,18 @@ const COMMON = new Set(
   ).split(" "),
 );
 // The same story under different headlines usually shares one distinctive name ("Reflection" in four takes on
-// Nvidia's deal talks): a long word that is not market boilerplate and not the company's own name, which is
-// whatever most of this token's headlines have in common.
+// Nvidia's deal talks): a long word that is not market boilerplate and not the company's own name.
 const keyTerms = (title: string, own: Set<string>) =>
   [...words(title)].filter((w) => w.length >= 7 && !own.has(w) && !COMMON.has(w));
-const logoOf = (url: string) => {
-  try {
-    return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=128`;
-  } catch {
-    return null;
-  }
+// The outlet's icon by the article's domain; a Google News redirect link carries none, so the outlet name stands in
+// for it ("Engadget" → engadget.com).
+const logoOf = (url: string, source: string | null) => {
+  const host = URL.canParse(url) ? new URL(url).hostname : null;
+  const domain =
+    host && host !== "news.google.com"
+      ? host
+      : source && `${source.toLowerCase().replace(/[^a-z0-9]/g, "")}.com`;
+  return domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=128` : null;
 };
 type Story = Awaited<ReturnType<typeof marketRepo.events>>[number];
 
@@ -67,9 +69,7 @@ export const market = {
       .filter((n) => sourceTier(n.source) < 3 || n.impact >= rule!.alone)
       .sort((a, b) => sourceTier(a.source) - sourceTier(b.source) || b.impact - a.impact);
     const news: Story[] = [];
-    const seen = new Map<string, number>();
-    for (const n of found) for (const w of words(n.title)) seen.set(w, (seen.get(w) ?? 0) + 1);
-    const own = new Set([...seen].filter(([, c]) => c > found.length / 2).map(([w]) => w));
+    const own = words(found[0]?.stock ?? "");
     const same = (a: Story, b: Story) =>
       sameStory(words(a.title), words(b.title)) ||
       (Math.abs(Number(a.published_at) - Number(b.published_at)) < 86400 &&
@@ -91,7 +91,7 @@ export const market = {
           title: n.title,
           source: n.source,
           url: n.url,
-          sourceLogo: logoOf(n.url),
+          sourceLogo: logoOf(n.url, n.source),
           impact: IMPACT[n.impact] ?? null,
           direction: n.direction,
           moveAfterPct: at <= to - 3600 && n.p0 && n.p1 ? Math.round((n.p1 / n.p0 - 1) * 10000) / 100 : null,
