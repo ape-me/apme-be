@@ -1,7 +1,7 @@
 import type { Sql } from "../lib/db";
 import { marketRepo } from "../repos/market";
 import type { HistoryRange, HistoryResponse } from "../contract";
-import { IMPACT } from "./news";
+import { IMPACT, sameStory, sourceTier, words } from "./news";
 import type { z } from "zod";
 
 // Chart ranges: how far back, and the bucket size that keeps each under ~750 points.
@@ -13,10 +13,17 @@ const RANGE = {
   "1w": { span: 604800, step: 900 },
   "1m": { span: 2592000, step: 3600 },
 } as const;
-// News markers per range: the hour and the day show material stories, the longer ranges only major ones, never more
-// than 6. The news loop runs every minute, so a story is on the 1h chart within a minute or two of reaching us.
-const MARKERS: Partial<Record<keyof typeof RANGE, number>> = { "1h": 2, "1d": 2, "1w": 3, "1m": 3 };
+// News markers per range: the lowest impact that counts, the impact a story needs to stand without a known outlet
+// behind it, and which 6 a range keeps (newest on the short ranges, biggest on the long ones). The news loop runs
+// every minute, so a story is on the 1h chart within a minute or two of reaching us.
+const MARKERS: Partial<Record<keyof typeof RANGE, { min: number; alone: number; newest: boolean }>> = {
+  "1h": { min: 1, alone: 3, newest: true },
+  "1d": { min: 1, alone: 3, newest: true },
+  "1w": { min: 3, alone: 4, newest: false },
+  "1m": { min: 3, alone: 4, newest: false },
+};
 const MAX_MARKERS = 6;
+type Story = Awaited<ReturnType<typeof marketRepo.events>>[number];
 
 export const market = {
   history: async (
@@ -31,9 +38,21 @@ export const market = {
       step < 60
         ? await marketRepo.ticks(sql, mint, from, step)
         : await marketRepo.history(sql, mint, from, step);
-    const minImpact = MARKERS[range];
-    const news = minImpact ? await marketRepo.events(sql, mint, from, to, minImpact, MAX_MARKERS) : [];
+    const rule = MARKERS[range];
+    const found: Story[] = rule ? await marketRepo.events(sql, mint, from, to, rule.min, 60) : [];
+    // Best outlet first, so when ten sites run one story, its dot is the best-sourced write-up.
+    const ranked = found
+      .filter((n) => sourceTier(n.source) < 3 || n.impact >= rule!.alone)
+      .sort((a, b) => sourceTier(a.source) - sourceTier(b.source) || b.impact - a.impact);
+    const news: Story[] = [];
+    for (const n of ranked) if (!news.some((k) => sameStory(words(n.title), words(k.title)))) news.push(n);
+    news.sort((a, b) =>
+      rule!.newest
+        ? Number(b.published_at) - Number(a.published_at)
+        : b.impact - a.impact || Number(b.published_at) - Number(a.published_at),
+    );
     const events = news
+      .slice(0, MAX_MARKERS)
       .map((n) => {
         const at = Number(n.published_at);
         return {

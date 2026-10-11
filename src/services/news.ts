@@ -26,6 +26,46 @@ const TIER1 = [
   "fortune",
   "the verge",
 ];
+// Established finance and tech outlets one step below TIER1; anything else (blogs, LinkedIn, local sites) is tier 3.
+const TIER2 = [
+  "yahoo finance",
+  "seeking alpha",
+  "benzinga",
+  "investing.com",
+  "motley fool",
+  "thestreet",
+  "business insider",
+  "marketbeat",
+  "tipranks",
+  "barchart",
+  "zacks",
+  "morningstar",
+  "kiplinger",
+  "forbes",
+  "cnn",
+  "bbc",
+  "guardian",
+  "new york times",
+  "nyt",
+  "washington post",
+  "economist",
+  "wired",
+  "engadget",
+  "ars technica",
+  "coindesk",
+  "the block",
+  "decrypt",
+  "pr newswire",
+  "business wire",
+  "globenewswire",
+  "stocktwits",
+  "24/7 wall st",
+  "gurufocus",
+];
+export const sourceTier = (source: string | null) => {
+  const s = (source ?? "").toLowerCase();
+  return TIER1.some((x) => s.includes(x)) ? 1 : TIER2.some((x) => s.includes(x)) ? 2 : 3;
+};
 export const IMPACT = ["none", "minor", "material", "major", "critical"] as const;
 export const IMPACT_LEVEL: Record<string, number> = { none: 0, minor: 1, material: 2, major: 3, critical: 4 };
 const ymd = (x: Date) => x.toISOString().slice(0, 10);
