@@ -13,8 +13,9 @@ const RANGE = {
   "1w": { span: 604800, step: 900 },
   "1m": { span: 2592000, step: 3600 },
 } as const;
-// News markers per range: the day shows material stories, the longer ranges only major ones, never more than 6.
-const MARKERS: Partial<Record<keyof typeof RANGE, number>> = { "1d": 2, "1w": 3, "1m": 3 };
+// News markers per range: the hour and the day show material stories, the longer ranges only major ones, never more
+// than 6. The news loop runs every minute, so a story is on the 1h chart within a minute or two of reaching us.
+const MARKERS: Partial<Record<keyof typeof RANGE, number>> = { "1h": 2, "1d": 2, "1w": 3, "1m": 3 };
 const MAX_MARKERS = 6;
 
 export const market = {

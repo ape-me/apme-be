@@ -80,7 +80,7 @@ export const HistoryResponse = z.object({
   points: z.array(HistoryPoint),
   changeAbs: z.number().nullable(),
   changePct: z.number().nullable(),
-  events: z.array(NewsEvent), // 1d, 1w, 1m only; empty on the short ranges
+  events: z.array(NewsEvent), // 1h, 1d, 1w, 1m; empty on 5m and 15m
 });
 // Home screen: hand-picked groups (ids are stable) and the three movers lists, all full Stock objects.
 export const Collection = z.object({
