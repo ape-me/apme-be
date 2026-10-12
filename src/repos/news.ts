@@ -78,9 +78,19 @@ export const newsRepo = {
     sql`UPDATE news SET impact = ${s.impact}, direction = ${s.direction}, confidence = ${s.confidence}, junk = ${s.junk} WHERE id = ${id}`,
   // Market rows have no stock; they are scored against the market itself.
   unscored: (sql: Sql, limit: number) =>
-    sql<{ id: string; title: string; summary: string | null; name: string | null; symbol: string | null }[]>`
-      SELECT id, title, summary, name, symbol FROM (
-        SELECT DISTINCT ON (n.id) n.id, n.title, n.summary, s.name, s.symbol, n.published_at
+    sql<
+      {
+        id: string;
+        title: string;
+        summary: string | null;
+        name: string | null;
+        symbol: string | null;
+        underlying: string | null;
+        category: string | null;
+      }[]
+    >`
+      SELECT id, title, summary, name, symbol, underlying, category FROM (
+        SELECT DISTINCT ON (n.id) n.id, n.title, n.summary, s.name, s.symbol, s.underlying, s.category, n.published_at
         FROM news n LEFT JOIN news_stocks ns ON ns.news_id = n.id LEFT JOIN stocks s ON s.mint = ns.mint
         WHERE n.impact IS NULL AND NOT n.junk AND (n.scope = 'market' OR s.mint IS NOT NULL)
         ORDER BY n.id, ns.relevance DESC NULLS LAST, s.symbol) x
@@ -163,10 +173,10 @@ export const newsRepo = {
         pooled: boolean;
         category: string;
       }[]
-    >`SELECT DISTINCT ON (coalesce(underlying, mint)) mint, symbol, name, issuer, underlying, category,
-             coalesce(liquidity_usd, 0) >= 5000 AS pooled
+    >`SELECT DISTINCT ON (category = 'crypto', coalesce(underlying, mint)) mint, symbol, name, issuer, underlying,
+             category, coalesce(liquidity_usd, 0) >= 5000 AS pooled
         FROM stocks
-        WHERE NOT excluded AND price_usd IS NOT NULL AND category IN ('stock', 'etf', 'preipo')
+        WHERE NOT excluded AND price_usd IS NOT NULL AND category IN ('stock', 'etf', 'preipo', 'crypto')
           AND (coalesce(liquidity_usd, 0) >= 5000 OR issuer = 'ondo')
-        ORDER BY coalesce(underlying, mint), coalesce(liquidity_usd, 0) DESC`,
+        ORDER BY category = 'crypto', coalesce(underlying, mint), coalesce(liquidity_usd, 0) DESC`,
 };

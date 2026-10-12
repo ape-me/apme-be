@@ -25,6 +25,8 @@ export const FEEDS: { name: string; url: string }[] = [
   { name: "Benzinga", url: "https://www.benzinga.com/feed" },
   { name: "CoinDesk", url: "https://www.coindesk.com/arc/outboundfeeds/rss/" },
   { name: "The Block", url: "https://www.theblock.co/rss.xml" },
+  { name: "Cointelegraph", url: "https://cointelegraph.com/rss" },
+  { name: "Decrypt", url: "https://decrypt.co/feed" },
   { name: "PR Newswire", url: "https://www.prnewswire.com/rss/news-releases-list.rss" },
   {
     name: "PR Newswire",

@@ -132,14 +132,53 @@ const AMBIGUOUS_NAMES = new Set([
   "Westlake",
   "Williams",
 ]);
+// Coins go by their own name in headlines, not the bridged token's ("Wrapped BTC (Portal)" is Bitcoin).
+const COIN_NAMES: Record<string, string> = {
+  BTC: "Bitcoin",
+  ETH: "Ethereum",
+  LTC: "Litecoin",
+  NEAR: "NEAR Protocol",
+  BNB: "BNB",
+  XRP: "XRP",
+  SPX: "SPX6900",
+  PUMP: "Pump.fun",
+  MPLX: "Metaplex",
+  GRIFFAIN: "Griffain",
+};
+const coinTicker = (s: Stock) => (s.underlying ?? s.symbol).toUpperCase();
+const coinName = (s: Stock) => COIN_NAMES[coinTicker(s)] ?? bareName(s.name);
+// Coin names and tickers that are everyday words ("Grass", "LINK", "DOGE" the agency): only ever matched as $TICKER.
+const COIN_WORDS = new Set(
+  (
+    "Grass Seeker Graphite Comedian Cate Official Trump ORE BAN GOAT TROLL GIGA CRED LINK UNI CATE NEET ARC STONK " +
+    "GRASS CARDS MET NOS USELESS TRUMP DOGE"
+  ).split(" "),
+);
+// Coins are only matched in crypto outlets and in their own lookups: "Jupiter" and "Render" are other things elsewhere.
+const CRYPTO_OUTLETS = new Set(["CoinDesk", "The Block", "Cointelegraph", "Decrypt"]);
+const coinMatcher = (s: Stock, stockTickers: Set<string>) => {
+  const name = coinName(s),
+    t = coinTicker(s);
+  const byName =
+    name.length > 3 && !COIN_WORDS.has(name)
+      ? new RegExp(`\\b${esc(name)}\\b`, /\s/.test(name) ? "i" : "")
+      : null;
+  const byTicker = new RegExp(
+    t.length >= 3 && !stockTickers.has(t) && !COIN_WORDS.has(t) ? `\\$?\\b${esc(t)}\\b` : `\\$${esc(t)}\\b`,
+  );
+  return (title: string) => !!(byName?.test(title) || byTicker.test(title));
+};
+
 // One headline test per stock. A pooled company also matches on its first word ("Micron"), but only when no other
 // listed name starts with it ("Global" is 17 funds, "United" 11 companies), never for a fund, and only capitalised.
 const matchers = (stocks: Stock[]) => {
   const firstOf = (s: Stock) => bareName(s.name).split(/[\s,.]+/)[0]!;
   const uses = new Map<string, number>();
   for (const s of stocks) uses.set(firstOf(s), (uses.get(firstOf(s)) ?? 0) + 1);
+  const stockTickers = new Set(stocks.flatMap((s) => tickerOf(s) ?? []));
   return new Map(
     stocks.map((s) => {
+      if (s.category === "crypto") return [s.mint, coinMatcher(s, stockTickers)];
       const first = firstOf(s);
       const full = bareName(s.name);
       const byName =
@@ -203,9 +242,9 @@ async function finnhub(env: Env, ticker: string): Promise<Raw[]> {
   }));
 }
 
-async function google(name: string): Promise<Raw[]> {
+async function google(query: string): Promise<Raw[]> {
   const r = await fetch(
-    `https://news.google.com/rss/search?q=${encodeURIComponent(`"${name}" when:2d`)}&hl=en-US&gl=US&ceid=US:en`,
+    `https://news.google.com/rss/search?q=${encodeURIComponent(`${query} when:2d`)}&hl=en-US&gl=US&ceid=US:en`,
     { headers: { "user-agent": UA } },
   );
   if (!r.ok) return [];
@@ -328,14 +367,27 @@ const outlet = (url: string, source: string | null) => {
 };
 
 // Four typed questions per article, no text generation.
-type Scorable = { title: string; summary: string | null; name: string | null; symbol: string | null };
+type Scorable = {
+  title: string;
+  summary: string | null;
+  name: string | null;
+  symbol: string | null;
+  underlying: string | null;
+  category: string | null;
+};
+const subject = (a: Scorable) =>
+  !a.name
+    ? "Subject: the US stock market as a whole."
+    : a.category === "crypto"
+      ? `Coin: ${COIN_NAMES[(a.underlying ?? a.symbol!).toUpperCase()] ?? a.name} (${a.underlying ?? a.symbol}).`
+      : `Stock: ${a.name} (${a.symbol}).`;
 const jevInput = (a: Scorable) => ({
-  state: `${a.name ? `Stock: ${a.name} (${a.symbol}).` : "Subject: the US stock market as a whole."} Headline: ${a.title}. Summary: ${a.summary ?? ""}`,
+  state: `${subject(a)} Headline: ${a.title}. Summary: ${a.summary ?? ""}`,
   questions: {
     about: {
       type: "noul",
       instructions: a.name
-        ? "Is this article primarily about the named company rather than mentioning it in passing?"
+        ? `Is this article primarily about the named ${a.category === "crypto" ? "coin" : "company"} rather than mentioning it in passing?`
         : "Is this article about something that moves US stocks broadly: rates, inflation, tariffs, jobs, the indexes?",
     },
     impact: {
@@ -491,7 +543,8 @@ export async function ingestNews(env: Env, sql: Sql, pass: number) {
   for (const s of slice) {
     const ticker = tickerOf(s);
     let raws = ticker && env.FINNHUB_KEY ? await finnhub(env, ticker) : [];
-    if (!raws.length) raws = await google(s.name);
+    if (!raws.length)
+      raws = await google(s.category === "crypto" ? `"${coinName(s)}" crypto` : `"${s.name}"`);
     const seen = new Set<string>();
     const recent = await newsRepo.recentTitles(sql, s.mint, t - 2 * 86400);
     const hit = hits.get(s.mint)!;
@@ -573,7 +626,9 @@ async function ingestFeeds(sql: Sql, stocks: Stock[], matchOf: ReturnType<typeof
     const key = titleKey(n.title);
     if (seen.has(key)) continue;
     seen.add(key);
-    const about = hits.filter((h) => h.hit(n.title)).slice(0, 3);
+    const about = hits
+      .filter((h) => (h.s.category !== "crypto" || CRYPTO_OUTLETS.has(n.source ?? "")) && h.hit(n.title))
+      .slice(0, 3);
     const scope = about.length ? "stock" : MACRO.test(n.title) ? "market" : null;
     if (!scope) continue;
     const [exact] = await newsRepo.byTitleKey(sql, key, t - 7 * 86400);
