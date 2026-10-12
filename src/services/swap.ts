@@ -187,7 +187,9 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
       )
     : null;
   const gasPayer = gasKeypair(env).publicKey.toBase58();
-  let o = await order(env, q.sponsor ? { ...base, payer: gasPayer } : base);
+  // Ondo's market maker quotes only when the taker pays (its fills are gasless anyway), so it is never sponsored.
+  const sponsor = q.sponsor && stock.issuer !== "ondo";
+  let o = await order(env, sponsor ? { ...base, payer: gasPayer } : base);
   if (o.errorCode === 1) {
     const usdc = await conn.getTokenAccountBalance(ata(taker, new PublicKey(USDC_MINT))).catch(() => null);
     const heldUsd = Number(usdc?.value.uiAmount ?? 0);
@@ -200,8 +202,8 @@ async function buildOrder(env: Env, sql: Sql, q: QuoteInput) {
   // Jupiter bills a wallet that holds SOL for its own gas and token-account rent, and refuses one with none it
   // will not sponsor. Both get our gas wallet as payer instead; only an RFQ-only name (Ondo) cannot take an alternate
   // payer, and there the wallet's own SOL is used and reported as such.
-  let payer: "user" | "jupiter" | "apeme" = q.sponsor ? "apeme" : o.gasless ? "jupiter" : "user";
-  if (!q.sponsor && (!o.transaction || !o.gasless)) {
+  let payer: "user" | "jupiter" | "apeme" = sponsor ? "apeme" : o.gasless ? "jupiter" : "user";
+  if (!sponsor && stock.issuer !== "ondo" && (!o.transaction || !o.gasless)) {
     const ours = await order(env, { ...base, payer: gasPayer }).catch(() => null);
     if (ours?.transaction) {
       o = ours;
