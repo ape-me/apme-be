@@ -187,9 +187,10 @@ const PRIVATE_NOTE = "Pre-IPO tokens trade above the last private valuation and 
 const RANGES = { "1M": 30, "3M": 91, "6M": 182, "1Y": 365 } as const;
 
 const MIN_USD = 10;
-const MIN_LEG_USD = 1;
+// Smallest slice that routes: Ondo's market maker quotes nothing under about $2.50.
+const legMinUsd = (issuer: string) => (issuer === "ondo" ? 3 : 1);
 const YEAR_S = 366 * 86400;
-const QUOTE_CONCURRENCY = 2; // Jupiter rate-limits a burst of quotes
+const QUOTE_GAP_MS = 150; // one quote at a time, spaced: Jupiter rate-limits a burst
 const now = () => Math.floor(Date.now() / 1000);
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const day = (t: number) =>
@@ -622,30 +623,26 @@ async function quoteLegs(
     });
   const quoted: (Awaited<ReturnType<typeof quote>> & { weight: number })[] = [];
   try {
-    for (let i = 0; i < legs.length; i += QUOTE_CONCURRENCY)
-      quoted.push(
-        ...(await Promise.all(
-          legs.slice(i, i + QUOTE_CONCURRENCY).map(async (l) => {
-            const mints =
-              side === "buy"
-                ? { inputMint: "usdc", outputMint: l.mint }
-                : { inputMint: l.mint, outputMint: "usdc" };
-            const q = await quote(
-              c.env,
-              c.sql,
-              c.user,
-              c.wallets,
-              { ...c.settings, slippage_bps: 0 }, // auto: Jupiter sizes it per stock, pre-IPO needs more than a flat 1%
-              { ...mints, amount: l.amount.toString(), taker, sponsor: true },
-              orderId,
-            ).catch((e: Error) => {
-              const h = e instanceof HttpError ? e : null;
-              throw new HttpError(h?.status ?? 500, e.message, { ...h?.data, symbol: l.symbol });
-            });
-            return { weight: l.weight, ...q };
-          }),
-        )),
-      );
+    for (const [i, l] of legs.entries()) {
+      if (i) await new Promise((ok) => setTimeout(ok, QUOTE_GAP_MS));
+      const mints =
+        side === "buy"
+          ? { inputMint: "usdc", outputMint: l.mint }
+          : { inputMint: l.mint, outputMint: "usdc" };
+      const q = await quote(
+        c.env,
+        c.sql,
+        c.user,
+        c.wallets,
+        { ...c.settings, slippage_bps: 0 }, // auto: Jupiter sizes it per stock, pre-IPO needs more than a flat 1%
+        { ...mints, amount: l.amount.toString(), taker, sponsor: true },
+        orderId,
+      ).catch((e: Error) => {
+        const h = e instanceof HttpError ? e : null;
+        throw new HttpError(h?.status ?? 500, e.message, { ...h?.data, symbol: l.symbol });
+      });
+      quoted.push({ weight: l.weight, ...q });
+    }
   } catch (e) {
     if (!existing) await basketsRepo.setStatus(c.sql, orderId, "failed");
     throw e;
@@ -672,9 +669,8 @@ export async function quoteBuy(
   const stocks = mix(pick(b), weights);
   if (amountUsd < MIN_USD) throw new HttpError(400, "below_minimum", { minUsd: MIN_USD });
   // Each stock is its own swap: too small a slice will not route.
-  const smallest = Math.min(...stocks.map((s) => s.weight));
-  if ((amountUsd * smallest) / 100 < MIN_LEG_USD)
-    throw new HttpError(400, "below_minimum", { minUsd: Math.ceil((MIN_LEG_USD * 100) / smallest) });
+  const minUsd = Math.max(...stocks.map((s) => Math.ceil((legMinUsd(s.row.issuer) * 100) / s.weight)));
+  if (amountUsd < minUsd) throw new HttpError(400, "below_minimum", { minUsd });
   // Check the wallet up front: otherwise every leg quotes fine and the last ones fail at execute.
   const usdc = await connection(c.env)
     .getTokenAccountBalance(ata(new PublicKey(taker), new PublicKey(USDC_MINT)))

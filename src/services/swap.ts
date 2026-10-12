@@ -91,11 +91,17 @@ async function order(env: Env, params: Record<string, string>, tries = 3): Promi
   const msg = j.error ?? "";
   console.error("jupiter order", status, msg, params.inputMint, params.outputMint);
   // A basket quotes several stocks back to back; ride out a burst limit or a flaky quote instead of failing it.
-  if (tries > 1 && (status === 429 || status === 0 || status >= 500 || /failed to get quotes/i.test(msg))) {
+  // Ondo's market maker skipping a quote reads as "only available via JupiterZ": worth one more ask.
+  const rfqMiss = /only available via JupiterZ/i.test(msg);
+  if (
+    tries > 1 &&
+    (status === 429 || status === 0 || status >= 500 || rfqMiss || /failed to get quotes/i.test(msg))
+  ) {
     await new Promise((ok) => setTimeout(ok, status === 429 ? 1500 : 300));
     return order(env, params, tries - 1);
   }
   if (status === 429) throw new HttpError(503, "rate_limited", { upstreamStatus: status });
+  if (rfqMiss) throw new HttpError(422, "ondo_unavailable", { upstreamStatus: status });
   if (/route|failed to get quotes/i.test(msg))
     throw new HttpError(422, "no_route", { upstreamStatus: status });
   throw new HttpError(502, "upstream_error", { upstreamStatus: status, upstreamError: msg || null });
