@@ -1,11 +1,10 @@
 import type { Sql } from "../lib/db";
 import { stocksRepo, type Category } from "../repos/stocks";
-import { tickerRepo } from "../repos/ticker";
 import { notFound } from "../lib/errors";
 import { shapeStock, marketSession } from "./shape";
 import { sparks } from "./spark";
 import { COLLECTIONS, filterCollection } from "./collections";
-import type { StocksResponse, TickerResponse, CollectionsResponse, MoversResponse } from "../contract";
+import type { StocksResponse, CollectionsResponse, MoversResponse } from "../contract";
 import type { z } from "zod";
 
 const market = () => {
@@ -18,20 +17,6 @@ const MOVER_MAX_PREMIUM = 15; // percent off the real price
 const MOVER_DEEP_LIQUIDITY = 500_000; // trusted without a mark
 
 export const catalog = {
-  ticker: async (sql: Sql, stonks: number): Promise<z.infer<typeof TickerResponse>> => {
-    const rows = await tickerRepo.rows(sql, stonks);
-    return {
-      updatedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-      tokens: rows.map((r) => ({
-        id: r.id,
-        label: r.label,
-        logo: r.logo,
-        change24h: r.change24h == null ? null : Number(r.change24h),
-        price: r.price == null ? null : Number(r.price),
-      })),
-    };
-  },
-
   stocks: async (
     sql: Sql,
     issuers?: string[],

@@ -276,6 +276,7 @@ export type WsMessage = z.infer<typeof WsMessage>;
 
 export const TickerToken = z.object({
   id: Mint,
+  kind: z.literal("stonk"),
   label: z.string(),
   logo: z.string().nullable(),
   change24h: z.number().nullable(),

@@ -7,6 +7,7 @@ import { cached } from "../lib/cache";
 import { badRequest } from "../lib/errors";
 import { Mint, Limit, Ts, Issuer, HistoryRange } from "../contract";
 import { catalog } from "../services/catalog";
+import { ticker } from "../services/ticker";
 import { news, IMPACT_LEVEL } from "../services/news";
 import { insights } from "../services/insights";
 import { depth } from "../services/swap";
@@ -28,14 +29,9 @@ const parse = <T>(schema: z.ZodType<T>, v: unknown): T => {
 };
 
 export const read = new Hono<{ Bindings: Env; Variables: DbVars }>();
+// The landing page tape needs no database, so it answers ahead of the db middleware.
+read.get("/ticker", rateLimited, (c) => cached(c.req.raw, 30, async () => c.json(await ticker())));
 read.use("*", rateLimited, withDb);
-
-read.get("/ticker", (c) =>
-  cached(c.req.raw, 3, async () => {
-    const q = parse(z.object({ stonks: Limit.default(10) }), c.req.query());
-    return c.json(await catalog.ticker(c.get("sql"), q.stonks));
-  }),
-);
 
 read.get("/stocks", (c) =>
   cached(c.req.raw, 5, async () => {
